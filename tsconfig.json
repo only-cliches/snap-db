@@ -1,0 +1,25 @@
+{
+    "compilerOptions": {
+        "target": "ES5",
+        "module": "commonjs",
+        "moduleResolution": "node",
+        "stripInternal": true,
+        "importHelpers": false,
+        "strictNullChecks": true,
+        "noImplicitAny": false,
+        "declaration": true,
+        "declarationDir": "bin",
+        "noImplicitReturns": true,
+        "noImplicitThis": true,
+        "noImplicitUseStrict": true,
+        "sourceMap": true,
+        "lib": ["dom", "es2015", "es5"],
+        "outDir":"bin",
+    },
+    "include": [
+        "src/index.ts"
+    ],
+    "exclude": [
+        "node_modules"
+    ]
+}

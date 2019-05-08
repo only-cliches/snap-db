@@ -1,0 +1,26 @@
+{
+  "name": "snap-db",
+  "version": "0.0.1",
+  "description": "Simple & Blazing Fast Javascript/Webassembly key-value store",
+  "main": "bin/index.js",
+  "scripts": {
+    "build-wasm": "cd src-wasm && ./build.sh --prod && cp ../src/db-index.js ../bin/db-index.js && cp ../src/db-index.wasm ../bin/db-index.wasm",
+    "build":"npm run build-wasm && tsc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ClickSimply/snap-db.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ClickSimply/snap-db/issues"
+  },
+  "homepage": "https://github.com/ClickSimply/snap-db#readme",
+  "devDependencies": {
+    "@types/node": "^12.0.0",
+    "ts-node": "^8.1.0",
+    "typescript": "^3.4.5"
+  }
+}

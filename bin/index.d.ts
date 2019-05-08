@@ -1,4 +1,3 @@
-/// <reference types="node" />
 import * as fs from "fs";
 export declare class SnapDB<K> {
     keyType: "string" | "float" | "int";

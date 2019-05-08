@@ -531,8 +531,7 @@ db.ready().then(() => {
             last = r[0];
             console.log(r[2]);
         }
-        // return db.put(r[0], r[2]);
-        return Promise.resolve();
+        return db.put(r[0], r[2]);
     })).then((data) => {
         console.timeEnd("WRITE");
         console.time("READ");

@@ -14,14 +14,14 @@ extern "C" {
 }
 
 // definition of one index
-typedef std::map<double, unsigned long (*)> db_index_sorted;
-typedef std::unordered_map<double, unsigned long (*)> db_index_hash;
+typedef std::map<double, unsigned int (*)> db_index_sorted;
+typedef std::unordered_map<double, unsigned int (*)> db_index_hash;
 
-typedef std::map<std::string, unsigned long (*)> db_index_sorted_str;
-typedef std::unordered_map<std::string, unsigned long (*)> db_index_hash_str;
+typedef std::map<std::string, unsigned int (*)> db_index_sorted_str;
+typedef std::unordered_map<std::string, unsigned int (*)> db_index_hash_str;
 
-typedef std::map<unsigned long, unsigned long (*)> db_index_sorted_int;
-typedef std::unordered_map<unsigned long, unsigned long (*)> db_index_hash_int;
+typedef std::map<unsigned int, unsigned int (*)> db_index_sorted_int;
+typedef std::unordered_map<unsigned int, unsigned int (*)> db_index_hash_int;
 
 // global object containing list of indexes
 std::vector<db_index_sorted> index_list_sorted;
@@ -70,13 +70,13 @@ int read_index(int index, int callback, int reverse) {
     return 0;
 }
 
-int add_to_index(int index, double key, unsigned long  fileId, unsigned long  fileLocation, unsigned long fileLength) {
+int add_to_index(int index, double key, unsigned int  fileId, unsigned int  fileLocation, unsigned int fileLength) {
     db_index_hash::const_iterator got = index_list_hash[index].find(key);
 
     // not in list
     if (got == index_list_hash[index].end()) {
-        unsigned long * ptr;
-        ptr = (unsigned long *) calloc(3, sizeof(unsigned long));
+        unsigned int * ptr;
+        ptr = (unsigned int *) calloc(3, sizeof(unsigned int));
         ptr[0] = fileId;
         ptr[1] = fileLocation;
         ptr[2] = fileLength;
@@ -200,13 +200,13 @@ int read_index_str(int index, int callback, int reverse) {
     return 0;
 }
 
-int add_to_index_str(int index, std::string key, unsigned long  fileId, unsigned long  fileLocation, unsigned long fileLength) {
+int add_to_index_str(int index, std::string key, unsigned int  fileId, unsigned int  fileLocation, unsigned int fileLength) {
     db_index_hash_str::const_iterator got = index_list_hash_str[index].find(key);
 
     // not in list
     if (got == index_list_hash_str[index].end()) {
-        unsigned long * ptr;
-        ptr = (unsigned long *) calloc(3, sizeof(unsigned long));
+        unsigned int * ptr;
+        ptr = (unsigned int *) calloc(3, sizeof(unsigned int));
         ptr[0] = fileId;
         ptr[1] = fileLocation;
         ptr[2] = fileLength;
@@ -330,13 +330,13 @@ int read_index_int(int index, int callback, int reverse) {
     return 0;
 }
 
-int add_to_index_int(int index, unsigned long key, unsigned long  fileId, unsigned long  fileLocation, unsigned long fileLength) {
+int add_to_index_int(int index, unsigned int key, unsigned int  fileId, unsigned int  fileLocation, unsigned int fileLength) {
     db_index_hash_int::const_iterator got = index_list_hash_int[index].find(key);
 
     // not in list
     if (got == index_list_hash_int[index].end()) {
-        unsigned long * ptr;
-        ptr = (unsigned long *) calloc(3, sizeof(unsigned long));
+        unsigned int * ptr;
+        ptr = (unsigned int *) calloc(3, sizeof(unsigned int));
         ptr[0] = fileId;
         ptr[1] = fileLocation;
         ptr[2] = fileLength;
@@ -359,7 +359,7 @@ int empty_index_int(int index) {
     return index;
 }
 
-int del_key_int(int index, unsigned long key) {
+int del_key_int(int index, unsigned int key) {
     index_list_hash_int[index].erase(key);
     index_list_sorted_int[index].erase(key);
     return 0;
@@ -370,7 +370,7 @@ unsigned long get_total_int(int index) {
 }
 
 
-std::string get_from_index_int(int index, unsigned long key) {
+std::string get_from_index_int(int index, unsigned int key) {
     db_index_hash_int::const_iterator got = index_list_hash_int[index].find(key);
 
     // not found
@@ -382,7 +382,7 @@ std::string get_from_index_int(int index, unsigned long key) {
     }
 }
 
-int read_index_range_int(int index, int callback, unsigned long low, unsigned long high, int reverse) {
+int read_index_range_int(int index, int callback, unsigned int low, unsigned int high, int reverse) {
 
     db_index_sorted_int::iterator lower = index_list_sorted_int[index].lower_bound(low);
     db_index_sorted_int::iterator upper = index_list_sorted_int[index].upper_bound(high);

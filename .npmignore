@@ -2,3 +2,4 @@ src
 src-wasm
 .vscode
 tsconfig.json
+performance-test

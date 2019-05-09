@@ -3,12 +3,15 @@ Simple Javascript/Webassembly key-value store
 
 Get a running database in a snap!
 
+SnapDB is a persistent key-value store that provides ordered mapping from keys to string values.  You can optionally also save values into memory, significantly increasing read performance.
+
+## Features
+
 - Zero dependencies.
 - Zero compiling.
-- Deterministic performance.
 - Constant time range & offset/limit queries.
 - Optimized with WebAssembly.
-- Only works in NodeJS or NodeJS like environments.
+- Works in NodeJS or NodeJS like environments.
 - Typescript & Babel friendly.
 - Keys are sorted, allowing *very fast* range queries.
 
@@ -62,7 +65,7 @@ The three `keyType`s correspond to different data types in WebAssembly.  Larger 
 |--------|-------|--------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
 | int    | 4     | 0 - 4,294,967,295                    | The smallest and fastest index type.                                                                                                               |
 | float  | 8     | 1.7E +/- 308                         | Equivelant to `double` type in C/C++, use this if you need decimal numbers.                                                                                 |
-| string | 1+    |  Up to 4,294,967,295 characters long | Allows you to use almost any size string as a key, memory usage is the same as the length of the key.  Write & read performance will be reduced with this key. |
+| string | 1+    |  Up to 4,294,967,295 characters long | Allows you to use almost any size string as a key, memory usage is the same as the length of the key. |
 
 ### Methods
 
@@ -82,7 +85,7 @@ Puts data into the database at the provided key, returns a successfull promise i
 Gets all the keys in the database, use the callback functions to capture the data.  Can optionally return the keys in reverse.
 
 #### .getAll(onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
-Gets all the rows in the database, use the callback functions to capture the data. Can optionally return all rows in reverse.
+Gets all the keys & values in the database, use the callback functions to capture the data. Can optionally return the keys in reverse order.
 
 #### .getCount(): number
 Gets the total number of records in the database.  This uses a *very fast* lookup method.
@@ -91,7 +94,7 @@ Gets the total number of records in the database.  This uses a *very fast* looku
 Gets a range of rows between the provided lower and upper values.  Can optionally return the results in reverse.  
 
 #### .offset(offset: number, limit: number, onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean)
-Gets a section of rows provided the offset and limit you'd like.  Can optionally return the results in reverse.
+Gets a section of rows provided the offset and limit you'd like.  Can optionally return the results in reverse from the bottom of the key list.
 
 # MIT License
 

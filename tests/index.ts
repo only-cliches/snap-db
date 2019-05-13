@@ -27,7 +27,7 @@ describe("SnapDB Tests", () => {
             return s.ready().then(() => {
                 const dataKey = ["str", "int", "flt"][i];
                 data[dataKey] = [];
-                for(let k = 1; k < 10000; k++) {
+                for(let k = 1; k < 1000; k++) {
                     switch(i) {
                         case 0:
                             data[dataKey].push([makeid(), makeid()]);
@@ -42,9 +42,8 @@ describe("SnapDB Tests", () => {
                 }
                 // scramble for insert
                 data[dataKey] = data[dataKey].sort((a, b) => Math.random() > 0.5 ? 1 : -1);
-                return Promise.all(data[dataKey].map(k => {
-                    return s.put(k[0], k[1]);
-                }))
+                data[dataKey].map(k => s.put(k[0], k[1]));
+                return Promise.resolve();
             });
         })).then(() => {
             try {
@@ -53,16 +52,16 @@ describe("SnapDB Tests", () => {
                     db_int.getCount(),
                     db_flt.getCount(),
                 ]).to.deep.equal([
-                    9999,
-                    9999,
-                    9999
+                    999,
+                    999,
+                    999
                 ], "Put failed!");
                 done();
             } catch (e) {
                 done(e);
             }
         });
-    });
+    }).timeout(15000);
 
     it("Integer: Sorted Keys", (done: MochaDone) => {
         data["int"] = data["int"].sort((a, b) => a[0] > b[0] ? 1 : -1);

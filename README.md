@@ -9,12 +9,14 @@ SnapDB is a persistent key-value store that provides ordered mapping from keys t
 
 - Zero dependencies.
 - Zero compiling.
+- Zero configuring.
+- On-disk database stored in a single file.
 - Constant time range & offset/limit queries.
 - Optimized with WebAssembly indexes.
-- Works in NodeJS or NodeJS like environments.
 - Typescript & Babel friendly.
+- Works in NodeJS or NodeJS like environments.
 - Keys are sorted, allowing *very fast* range queries.
-- Uses stripped down SQLite compiled to webassembly as datastore.
+- Data is durable in the face of application or power failure.
 
 ## Installation
 
@@ -28,14 +30,16 @@ npm i snap-db --save
 import { SnapDB } from "snap-db";
 
 const db = new SnapDB(
-    "my_db", // folder to drop the database files into
+    "my_db", // database filename
     "int", // key type, can be "int", "string" or "float"
     false // enable or disable database value cache
 );
 
 // wait for db to be ready
 db.ready().then(() => {
+    // put a record
     db.put(20, "hello");
+    // get a record
     console.log(db.get(20)); // "hello"
 })
 ```
@@ -50,9 +54,9 @@ The `SnapDB` class accepts up to 3 arguments in the constructor.
 
 | Argument | Type                       | Details                                                                                                              |
 |----------|----------------------------|----------------------------------------------------------------------------------------------------------------------|
-| fileName | string                     | The folder to store the database files in, can be absolute path.                                                     |
+| fileName | string                     | The file to persist data to.                                                     |
 | keyType  | "int" \| "string" \| "float" | The database can only use one type of key at a time.  You cannot change the key after the database has been created. |
-| useCache | bool                       | If enabled, data will be saved to memory in addition to being saved to disk, allowing MUCH faster reads.             |
+| useCache | bool                       | If enabled, data will be loaded to/from js memory in addition to being saved to disk, allowing MUCH faster reads.             |
 
 The three `keyType`s correspond to different data types in WebAssembly.  Larger keys give you more flexibility but cost more space and thus further limit the maximum number of keys you can have.
 
@@ -62,21 +66,22 @@ The three `keyType`s correspond to different data types in WebAssembly.  Larger 
 |--------|-------|--------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
 | int    | 4     | 0 - 4,294,967,295                    | The smallest and fastest index type.                                                                                                               |
 | float  | 8     | 1.7E +/- 308                         | Equivelant to `double` type in C/C++, use this if you need decimal numbers.                                                                                 |
-| string | 1+    |  Up to 4,294,967,295 characters long | Allows you to use almost any size string as a key, memory usage is the same as the length of the key. |
+| string | 1+    |  Up to 1 billion characters long | Allows you to use almost any size string as a key, memory usage is the same as the length of the key. |
 
 ### Methods
 
 #### .ready():Promise\<void\>
 Call on database initialization to know when the database is ready.
 
-#### .get(key: any):string
-Used to get a single key, returns a promise with the value of the key or rejects the promise if no key is found or there was an error getting the value requested.
-
-#### .delete(key: any):number
-Deletes a key from the database, returns succesfull promise if the key is deleted, rejects the promise if no key was found or if there was an error deleting it.
 
 #### .put(key: any, data: string):number
-Puts data into the database at the provided key, returns a successfull promise if the key and value are committed to disk, otherwise rejects the promise with an error.
+Puts data into the database at the provided key.
+
+#### .get(key: any):string
+Used to get the value of a single key.
+
+#### .delete(key: any):number
+Deletes a key and it's value from the database.
 
 #### .getAllKeys(onKey: (key: any) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
 Gets all the keys in the database, use the callback functions to capture the data.  Can optionally return the keys in reverse.

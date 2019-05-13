@@ -180,9 +180,9 @@ var SnapDB = /** @class */ (function () {
         // write key to memory
         var wasmFNs = { "string": wasm.add_to_index_str, "int": wasm.add_to_index_int, "float": wasm.add_to_index };
         wasmFNs[this.keyType](this._indexNum, key);
-        this._cache[String(key)] = this.memoryCache ? data : "";
         // write data to database
         var result = wasm.database_put(this._dbNum, String(key), data);
+        this._cache[String(key)] = this.memoryCache ? data : "";
         if (result === 0) {
             return 0;
         }

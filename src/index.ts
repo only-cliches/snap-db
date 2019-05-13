@@ -382,7 +382,7 @@ export class SnapDB<K> {
     
 }
 
-/*
+
 function makeid() {
     var text = "";
     var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -425,4 +425,4 @@ db.ready().then(() => {
             console.log((db.getCount() / (Date.now() - start) * 1000).toLocaleString(), "Records Per Second (READ)");
         }, false);
     });
-});*/
+});

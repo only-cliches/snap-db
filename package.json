@@ -4,8 +4,8 @@
   "description": "Simple & Blazing Fast Javascript/Webassembly key-value store",
   "main": "bin/index.js",
   "scripts": {
-    "build-wasm": "cd src-wasm && ./build.sh --prod && cp ../src/db-index.js ../bin/db-index.js && cp ../src/db-index.wasm ../bin/db-index.wasm",
-    "build": "npm run build-wasm && tsc",
+    "build-wasm": "cd src-wasm && ./build.sh --prod && cp ../src/db.js ../bin/db.js && cp ../src/db.wasm ../bin/db.wasm",
+    "build": "tsc",
     "test": "rm -rf testDB* && mocha -r ts-node/register tests/index.ts && rm -rf testDB*"
   },
   "repository": {

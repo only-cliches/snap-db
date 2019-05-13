@@ -5,6 +5,7 @@
 #include <emscripten/bind.h>
 #include <vector>
 #include <time.h>
+#include "sqlite3.h"
 
 using namespace emscripten;
 
@@ -21,6 +22,17 @@ typedef std::map<double, char *> db_index_sorted;
 typedef std::map<std::string, char *> db_index_sorted_str;
 
 typedef std::map<unsigned int, char *> db_index_sorted_int;
+
+
+struct snapp_db {
+    sqlite3 * db;
+    int keyType;
+    int index;
+};
+
+std::unordered_map<int, snapp_db> databases;
+std::unordered_map<int, sqlite3_stmt *> database_cursors;
+
 
 // global object containing list of indexes
 std::vector<db_index_sorted> index_list_sorted;
@@ -66,10 +78,10 @@ int del_key(int index, double key)
     return 0;
 }
 
-unsigned long get_total(int index)
+unsigned int get_total(int index)
 {
     return index_list_sorted[index].size();
-}
+} 
 
 std::unordered_map<unsigned int, db_index_sorted::iterator> index_pointers;
 
@@ -285,7 +297,7 @@ int del_key_str(int index, std::string key)
     return 0;
 }
 
-unsigned long get_total_str(int index)
+unsigned int get_total_str(int index)
 {
     return index_list_sorted_str[index].size();
 }
@@ -498,7 +510,7 @@ int del_key_int(int index, unsigned int key)
     return 0;
 }
 
-unsigned long get_total_int(int index)
+unsigned int get_total_int(int index)
 {
     return index_list_sorted_int[index].size();
 }
@@ -641,7 +653,7 @@ int read_index_offset_int(int index, int reverse, double offset)
     if (reverse == 0) {
         index_int_pointers[loc]--;
     }
-
+ 
     return loc;
 }
 
@@ -685,6 +697,187 @@ unsigned int read_index_offset_int_next(int index, int ptr, int reverse, double 
     return count;
 }
 
+
+// database code
+
+std::string database_create(std::string file, int keyType) {
+    struct snapp_db thisDB;
+
+    thisDB.keyType = keyType;
+    int loc = random_int();
+    while (databases.count(loc) > 0)
+    {
+        loc = random_int();
+    }
+
+    const char *cstr = file.c_str();
+
+    int open = sqlite3_open(cstr, &thisDB.db);
+    if (open != SQLITE_OK) {
+        printf("ERROR opening DB: %s\n", sqlite3_errmsg(thisDB.db));
+        return "";
+    }
+
+    std::string newTable = "CREATE TABLE IF NOT EXISTS 'values' (id TEXT PRIMARY KEY UNIQUE, data TEXT);";
+
+    const char *sqlStr = newTable.c_str();
+
+    sqlite3_stmt *ppStmt;
+
+    sqlite3_prepare_v2(thisDB.db, sqlStr, -1, &ppStmt, NULL);
+
+    int result = sqlite3_step(ppStmt);
+    sqlite3_finalize(ppStmt);
+    if (result != SQLITE_DONE) {
+        printf("DB Error: %s\n", sqlite3_errmsg(thisDB.db));
+        return "";
+    }
+    
+    switch(keyType) {
+        case 0: // double
+            thisDB.index = new_index();
+        break;
+        case 1: // string
+            thisDB.index = new_index_str();
+        break;
+        case 2: // integer
+            thisDB.index = new_index_int();
+        break;
+    }
+    databases[loc] = thisDB;
+
+
+    return std::to_string(loc) + "," + std::to_string(thisDB.index);
+}
+
+
+int database_put(int db, std::string key, std::string value) {
+    struct snapp_db thisDB = databases[db];
+    
+    std::string insertStmt = "INSERT INTO 'values' (id, data) VALUES(?, ?) ON CONFLICT(id) DO UPDATE SET data=?;";
+
+    const char *sqlStr = insertStmt.c_str();
+    const char *keyStr = key.c_str();
+    const char *valueStr = value.c_str();
+
+    sqlite3_stmt *ppStmt;
+
+    sqlite3_prepare_v2(thisDB.db, sqlStr, -1, &ppStmt, NULL);
+    sqlite3_bind_text(ppStmt, 1, keyStr, -1, SQLITE_STATIC);
+    sqlite3_bind_text(ppStmt, 2, valueStr, -1, SQLITE_STATIC);
+    sqlite3_bind_text(ppStmt, 3, valueStr, -1, SQLITE_STATIC);
+
+    sqlite3_step(ppStmt);
+
+    sqlite3_finalize(ppStmt);
+
+    return 0;
+}
+
+std::string database_get(int db, std::string key) {
+
+    struct snapp_db thisDB = databases[db];
+
+    std::string selectStmt = "SELECT data FROM 'values' WHERE id=?;";
+
+    const char *sqlStr = selectStmt.c_str();
+    const char *keyStr = key.c_str();
+
+    sqlite3_stmt *ppStmt;
+
+    sqlite3_prepare_v2(thisDB.db, sqlStr, -1, &ppStmt, NULL);
+    sqlite3_bind_text(ppStmt, 1, keyStr, -1, SQLITE_STATIC);
+
+    int rc = sqlite3_step(ppStmt);
+
+    if (rc == SQLITE_ROW) {
+        std::string result = std::string(reinterpret_cast<const char*>(
+        sqlite3_column_text(ppStmt, 0)
+        ));
+        sqlite3_finalize(ppStmt);
+        return result;
+    } else {
+        sqlite3_finalize(ppStmt);
+        return "";
+    }
+}
+
+
+
+int database_del(int db, std::string key) {
+    struct snapp_db thisDB = databases[db];
+    
+    std::string insertStmt = "DELETE FROM 'values' WHERE id = ?;";
+
+    const char *sqlStr = insertStmt.c_str();
+    const char *keyStr = key.c_str();
+
+    sqlite3_stmt *ppStmt;
+
+    sqlite3_prepare_v2(thisDB.db, sqlStr, -1, &ppStmt, NULL);
+    sqlite3_bind_text(ppStmt, 1, keyStr, -1, SQLITE_STATIC);
+
+    sqlite3_step(ppStmt);
+
+    sqlite3_finalize(ppStmt);
+
+    return 0;
+}
+
+
+
+int database_close(int db) {
+    sqlite3_close(databases[db].db);
+    databases.erase(db);
+    return 0;
+}
+
+
+int database_cursor(int db) {
+
+    struct snapp_db thisDB = databases[db];
+
+    std::string selectStmt = "SELECT id FROM 'values';";
+
+    const char *sqlStr = selectStmt.c_str();
+
+    sqlite3_stmt *ppStmt;
+
+    sqlite3_prepare_v2(thisDB.db, sqlStr, -1, &ppStmt, NULL);
+
+    int loc = random_int();
+    while (database_cursors.count(loc) > 0)
+    {
+        loc = random_int();
+    }
+    database_cursors[loc] = ppStmt;
+    return loc;
+}
+
+std::string database_cursor_next(int db, int cursor, int count) {
+    struct snapp_db thisDB = databases[db];
+
+    if (!database_cursors[cursor]) {
+        return "";
+    }
+
+    sqlite3_stmt *ppStmt = database_cursors[cursor];
+
+    int next = sqlite3_step(ppStmt);
+
+    if (next == SQLITE_ROW) {
+        std::string result = std::string(reinterpret_cast<const char*>(
+            sqlite3_column_text(ppStmt, 0)
+        ));
+        return result;
+    } else {
+        sqlite3_finalize(ppStmt);
+        database_cursors.erase(cursor);
+        return "";
+    }
+}
+
+
 EMSCRIPTEN_BINDINGS(my_module)
 {
     function("loaded", &loaded);
@@ -721,4 +914,12 @@ EMSCRIPTEN_BINDINGS(my_module)
     function("read_index_offset_int_next", &read_index_offset_int_next);
     function("read_index_int", &read_index_int);
     function("read_index_int_next", &read_index_int_next);
+
+    function("database_create", &database_create);
+    function("database_put", &database_put);
+    function("database_get", &database_get);
+    function("database_del", &database_del);
+    function("database_close", &database_close);
+    function("database_cursor", &database_cursor);
+    function("database_cursor_next", &database_cursor_next);
 }

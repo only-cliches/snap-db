@@ -10,10 +10,11 @@ SnapDB is a persistent key-value store that provides ordered mapping from keys t
 - Zero dependencies.
 - Zero compiling.
 - Constant time range & offset/limit queries.
-- Optimized with WebAssembly.
+- Optimized with WebAssembly indexes.
 - Works in NodeJS or NodeJS like environments.
 - Typescript & Babel friendly.
 - Keys are sorted, allowing *very fast* range queries.
+- Uses stripped down SQLite compiled to webassembly as datastore.
 
 ## Installation
 
@@ -29,18 +30,14 @@ import { SnapDB } from "snap-db";
 const db = new SnapDB(
     "my_db", // folder to drop the database files into
     "int", // key type, can be "int", "string" or "float"
-    false // enable database value cache
+    false // enable or disable database value cache
 );
 
-const runDB = async () => {
-    // wait for the database to be ready
-    await db.ready();
-    // values are always strings
-    await db.put(20, "hello");
-    // get value from database
-    const value = await db.get(20);
-}
-runDB();
+// wait for db to be ready
+db.ready().then(() => {
+    db.put(20, "hello");
+    console.log(db.get(20)); // "hello"
+})
 ```
 
 ## API
@@ -72,13 +69,13 @@ The three `keyType`s correspond to different data types in WebAssembly.  Larger 
 #### .ready():Promise\<void\>
 Call on database initialization to know when the database is ready.
 
-#### .get(key: any):Promise\<any\>
+#### .get(key: any):string
 Used to get a single key, returns a promise with the value of the key or rejects the promise if no key is found or there was an error getting the value requested.
 
-#### .delete(key: any):Promise\<any\>
+#### .delete(key: any):number
 Deletes a key from the database, returns succesfull promise if the key is deleted, rejects the promise if no key was found or if there was an error deleting it.
 
-#### .put(key: any, data: string):Promise\<any\>
+#### .put(key: any, data: string):number
 Puts data into the database at the provided key, returns a successfull promise if the key and value are committed to disk, otherwise rejects the promise with an error.
 
 #### .getAllKeys(onKey: (key: any) => void, onComplete: (err?: any) => void, reverse?: boolean): void;

@@ -3,24 +3,18 @@ export declare class SnapDB<K> {
     memoryCache?: boolean | undefined;
     private _isReady;
     private _indexNum;
-    private _currentFileIdx;
-    private _currentFileLen;
+    _dbNum: number;
     private _path;
-    private _dataFiles;
-    private _keyStream;
-    private _tombStream;
-    private _dataStreams;
     private _cache;
-    private _keyData;
     /**
      * Creates an instance of SnapDB.
      *
-     * @param {string} folderName
+     * @param {string} fileName
      * @param {("string" | "float" | "int")} keyType
      * @param {boolean} [memoryCache]
      * @memberof SnapDB
      */
-    constructor(folderName: string, keyType: "string" | "float" | "int", memoryCache?: boolean | undefined);
+    constructor(fileName: string, keyType: "string" | "float" | "int", memoryCache?: boolean | undefined);
     /**
      * Loads previously saved data into cache if cache is enabled.
      *
@@ -39,13 +33,12 @@ export declare class SnapDB<K> {
      */
     private _checkWasmReady;
     /**
-     * Loads previously created database details into disk.
-     * Optionally loads cache from disk.
+     * Get all the keys from unqlite and load them into index
      *
      * @private
      * @memberof SnapDB
      */
-    private _loadIndexFromDisk;
+    private _loadKeys;
     /**
      * This promise returns when the database is ready to use.
      *
@@ -53,23 +46,7 @@ export declare class SnapDB<K> {
      * @memberof SnapDB
      */
     ready(): Promise<any>;
-    /**
-     * Currently does nothing.
-     *
-     * @param {(err: any) => void} complete
-     * @memberof SnapDB
-     */
-    do_compaction(complete: (err: any) => void): void;
-    /**
-     * Get a single value from the database at the given key.
-     *
-     * @param {K} key
-     * @returns {Promise<string>}
-     * @memberof SnapDB
-     */
-    get(key: K): Promise<string>;
-    private _readValue;
-    private _readValueSync;
+    get(key: K): string;
     /**
      * Delete a key and it's value from the data store.
      *
@@ -77,8 +54,7 @@ export declare class SnapDB<K> {
      * @returns {Promise<boolean>}
      * @memberof SnapDB
      */
-    delete(key: K): Promise<boolean>;
-    private _makeKey;
+    delete(key: K): number;
     /**
      * Put a key and value into the data store.
      * Replaces existing values with new values at the given key, otherwise creates a new key.
@@ -88,7 +64,7 @@ export declare class SnapDB<K> {
      * @returns {Promise<any>}
      * @memberof SnapDB
      */
-    put(key: K, data: string): Promise<any>;
+    put(key: K, data: string): number;
     /**
      * Get all keys from the data store in order.
      *

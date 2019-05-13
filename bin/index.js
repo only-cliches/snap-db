@@ -1,42 +1,21 @@
 Object.defineProperty(exports, "__esModule", { value: true });
-var wasm = require("./db-index.js");
+var wasm = require("./db.js");
 var path = require("path");
-var fs = require("fs");
 var SnapDB = /** @class */ (function () {
     /**
      * Creates an instance of SnapDB.
      *
-     * @param {string} folderName
+     * @param {string} fileName
      * @param {("string" | "float" | "int")} keyType
      * @param {boolean} [memoryCache]
      * @memberof SnapDB
      */
-    function SnapDB(folderName, keyType, memoryCache) {
-        var _this = this;
+    function SnapDB(fileName, keyType, memoryCache) {
         this.keyType = keyType;
         this.memoryCache = memoryCache;
-        this._currentFileIdx = 0;
-        this._currentFileLen = 0;
-        this._dataFiles = [];
-        this._dataStreams = [];
         this._cache = {};
-        this._keyData = {};
-        this._path = path.isAbsolute(folderName) ? folderName : path.join(process.cwd(), folderName);
-        // create the database folder if it's not already in place
-        var exists = fs.existsSync(this._path);
-        if (exists) {
-            this._checkWasmReady();
-        }
-        else {
-            fs.mkdir(this._path, function (err) {
-                if (err) {
-                    throw err;
-                }
-                else {
-                    _this._checkWasmReady();
-                }
-            });
-        }
+        this._path = fileName === ":memory:" ? fileName : (path.isAbsolute(fileName) ? fileName : path.join(process.cwd(), fileName));
+        this._checkWasmReady();
     }
     /**
      * Loads previously saved data into cache if cache is enabled.
@@ -59,27 +38,9 @@ var SnapDB = /** @class */ (function () {
             return;
         }
         this.getAllKeys(function (key) {
-            if (hasErr)
-                return;
-            count++;
-            var setKey = _this._makeKey(key);
-            _this._readValue(setKey, false, function (err, data) {
-                if (err) {
-                    hasErr = true;
-                    onErr(err);
-                }
-                else {
-                    _this._cache[setKey] = data;
-                    count--;
-                    if (count === 0 && allDone) {
-                        complete();
-                    }
-                }
-            });
+            _this._cache[String(key)] = wasm.database_get(_this._dbNum, String(key));
         }, function () {
-            if (hasErr)
-                return;
-            allDone = true;
+            complete();
         });
     };
     /**
@@ -92,18 +53,13 @@ var SnapDB = /** @class */ (function () {
         var _this = this;
         var checkReady = function () {
             if (wasm.loaded) {
-                switch (_this.keyType) {
-                    case "string":
-                        _this._indexNum = wasm.new_index_str();
-                        break;
-                    case "int":
-                        _this._indexNum = wasm.new_index_int();
-                        break;
-                    case "float":
-                        _this._indexNum = wasm.new_index();
-                        break;
+                var dbData = wasm.database_create(_this._path, { "float": 0, "string": 1, "int": 2 }[_this.keyType]);
+                if (!dbData) {
+                    throw new Error("Unable to connect to database at " + _this._path);
                 }
-                _this._loadIndexFromDisk();
+                _this._indexNum = parseInt(dbData.split(",")[1]);
+                _this._dbNum = parseInt(dbData.split(",")[0]);
+                _this._loadKeys();
             }
             else {
                 setTimeout(checkReady, 100);
@@ -112,154 +68,50 @@ var SnapDB = /** @class */ (function () {
         checkReady();
     };
     /**
-     * Loads previously created database details into disk.
-     * Optionally loads cache from disk.
+     * Get all the keys from unqlite and load them into index
      *
      * @private
      * @memberof SnapDB
      */
-    SnapDB.prototype._loadIndexFromDisk = function () {
+    SnapDB.prototype._loadKeys = function () {
         var _this = this;
-        Promise.all([0, 1, 2].map(function (s) {
-            return new Promise(function (res, rej) {
-                switch (s) {
-                    case 0:
-                        var exists_1 = fs.existsSync(path.join(_this._path, ".keys"));
-                        fs.open(path.join(_this._path, ".keys"), "a", function (err, fd) {
-                            if (err) {
-                                rej(err);
-                                return;
-                            }
-                            if (!exists_1) {
-                                _this._keyStream = fs.createWriteStream(path.join(_this._path, ".keys"), { autoClose: false, flags: "r+" });
-                                // new key file
-                                _this._keyStream.write(_this.keyType + "\n", "utf8", function (err) {
-                                    if (err) {
-                                        rej(err);
-                                        return;
-                                    }
-                                    res();
-                                });
-                            }
-                            else {
-                                var writeKeys_1 = function (keys) {
-                                    for (var i = 0; i < keys.length; i++) {
-                                        if (keys[i].trim().length) {
-                                            var keyData = keys[i].trim().split("::").map(function (s, k) {
-                                                if (k === 0) {
-                                                    if (_this.keyType !== "string") {
-                                                        return parseFloat(s);
-                                                    }
-                                                    return Buffer.from(s, "hex").toString("utf8");
-                                                }
-                                                else {
-                                                    return s.split(/,/gmi).map(function (s) { return parseInt(s); });
-                                                }
-                                            });
-                                            var totalVals = keyData[1][0] + keyData[1][1] + keyData[1][2];
-                                            var useKey = _this._makeKey(keyData[0]);
-                                            if (totalVals === 0) { // deleted key
-                                                var wasmFNs = { "string": wasm.del_key_str, "int": wasm.del_key_int, "float": wasm.del_key };
-                                                wasmFNs[_this.keyType](_this._indexNum, keyData[0]);
-                                                delete _this._keyData[useKey];
-                                            }
-                                            else { // new key value
-                                                var wasmFNs = { "string": wasm.add_to_index_str, "int": wasm.add_to_index_int, "float": wasm.add_to_index };
-                                                wasmFNs[_this.keyType](_this._indexNum, keyData[0]);
-                                                _this._keyData[useKey] = keyData[1];
-                                            }
-                                        }
-                                    }
-                                };
-                                // restore keys to memory
-                                fs.readFile(path.join(_this._path, ".keys"), function (err, data) {
-                                    if (err) {
-                                        rej(err);
-                                        return;
-                                    }
-                                    _this._keyStream = fs.createWriteStream(path.join(_this._path, ".keys"), { start: data.length, autoClose: false, flags: "r+" });
-                                    var keys = data.toString().split(/\n/gmi);
-                                    _this.keyType = keys.shift().trim();
-                                    writeKeys_1(keys);
-                                    fs.readFile(path.join(_this._path, ".tombs"), function (err, data) {
-                                        if (err) {
-                                            rej(err);
-                                            return;
-                                        }
-                                        var keys = data.toString().split(/\n/gmi);
-                                        writeKeys_1(keys);
-                                        res();
-                                    });
-                                });
-                            }
-                        });
-                        break;
-                    case 1:
-                        var attach_1 = function () {
-                            var exists = fs.existsSync(path.join(_this._path, _this._currentFileIdx + ".data"));
-                            if (!exists && _this._currentFileIdx === 0) { // initial startup
-                                fs.open(path.join(_this._path, _this._currentFileIdx + ".data"), "w+", function (err, fd) {
-                                    if (err) {
-                                        rej(err);
-                                        return;
-                                    }
-                                    _this._dataFiles[_this._currentFileIdx] = fd;
-                                    _this._dataStreams[_this._currentFileIdx] = fs.createWriteStream(path.join(_this._path, _this._currentFileIdx + ".data"), { autoClose: false, flags: "r+" });
-                                    res();
-                                });
-                            }
-                            else { // subsequent
-                                if (exists) {
-                                    fs.open(path.join(_this._path, _this._currentFileIdx + ".data"), "r+", function (err, fd) {
-                                        if (err) {
-                                            rej(err);
-                                            return;
-                                        }
-                                        _this._dataFiles[_this._currentFileIdx] = fd;
-                                        _this._currentFileIdx++;
-                                        attach_1();
-                                    });
-                                }
-                                else {
-                                    // found latest data file, prepare to write to it
-                                    _this._currentFileIdx--;
-                                    fs.fstat(_this._dataFiles[_this._currentFileIdx], function (err, stats) {
-                                        if (err) {
-                                            rej(err);
-                                            return;
-                                        }
-                                        _this._dataStreams[_this._currentFileIdx] = fs.createWriteStream(path.join(_this._path, _this._currentFileIdx + ".data"), { autoClose: false, start: stats.size, flags: "r+" });
-                                        _this._currentFileLen = stats.size;
-                                        res();
-                                    });
-                                }
-                            }
-                        };
-                        attach_1();
-                        break;
-                    case 2:
-                        var tombsExist = fs.existsSync(path.join(_this._path, ".tombs"));
-                        if (tombsExist) {
-                            var tombLength = fs.statSync(path.join(_this._path, ".tombs")).size;
-                            _this._tombStream = fs.createWriteStream(path.join(_this._path, ".tombs"), { autoClose: false, start: tombLength, flags: "r+" });
-                        }
-                        else {
-                            fs.writeFileSync(path.join(_this._path, ".tombs"), "");
-                            _this._tombStream = fs.createWriteStream(path.join(_this._path, ".tombs"), { autoClose: false, start: 0, flags: "r+" });
-                        }
-                        res();
-                        break;
+        var ptr = wasm.database_cursor(this._dbNum);
+        var nextKey = 0;
+        var lastKey;
+        var isDone = false;
+        var count = 0;
+        while (!isDone) {
+            nextKey = wasm.database_cursor_next(this._dbNum, ptr, count);
+            if (count === 0 && !nextKey) {
+                isDone = true;
+            }
+            else {
+                if (nextKey === lastKey) {
+                    isDone = true;
                 }
+                else {
+                    var dataKey = this.keyType === "string" ? nextKey : parseFloat(nextKey);
+                    // write key to memory
+                    var wasmFNs = { "string": wasm.add_to_index_str, "int": wasm.add_to_index_int, "float": wasm.add_to_index };
+                    if (nextKey !== "") {
+                        this._cache[String(nextKey)] = "";
+                        wasmFNs[this.keyType](this._indexNum, dataKey);
+                    }
+                    lastKey = nextKey;
+                }
+                count++;
+            }
+        }
+        if (this.memoryCache) {
+            this._loadCache(function () {
+                _this._isReady = true;
+            }, function (err) {
+                throw new Error(err);
             });
-        })).then(function () {
-            return new Promise(function (res, rej) {
-                _this._loadCache(res, rej);
-            });
-        }).then(function () {
-            _this._isReady = true;
-        }).catch(function (err) {
-            throw err;
-        });
+        }
+        else {
+            this._isReady = true;
+        }
     };
     /**
      * This promise returns when the database is ready to use.
@@ -281,76 +133,14 @@ var SnapDB = /** @class */ (function () {
             checkReady();
         });
     };
-    /**
-     * Currently does nothing.
-     *
-     * @param {(err: any) => void} complete
-     * @memberof SnapDB
-     */
-    SnapDB.prototype.do_compaction = function (complete) {
-        if (!this._isReady) {
-            complete("Database not ready!");
-            return;
-        }
-    };
-    /**
-     * Get a single value from the database at the given key.
-     *
-     * @param {K} key
-     * @returns {Promise<string>}
-     * @memberof SnapDB
-     */
     SnapDB.prototype.get = function (key) {
-        var _this = this;
-        return new Promise(function (res, rej) {
-            if (!_this._isReady) {
-                rej("Database not ready!");
-                return;
-            }
-            var useKey = _this._makeKey(key);
-            _this._readValue(useKey, true, function (err, data) {
-                if (err) {
-                    rej(err);
-                }
-                else {
-                    res(data);
-                }
-            });
-        });
-    };
-    SnapDB.prototype._readValue = function (key, useCache, complete) {
-        var dataInfo = this._keyData[key];
-        if (!dataInfo) {
-            complete(new Error("Key not found!"), "");
+        if (!this._isReady) {
+            throw new Error("Database not ready!");
         }
-        else {
-            if (useCache && this.memoryCache && this._cache[key]) {
-                complete(undefined, this._cache[key]);
-                return;
-            }
-            var readBuffer = Buffer.alloc(dataInfo[2]);
-            fs.read(this._dataFiles[dataInfo[0]], readBuffer, 0, dataInfo[2], dataInfo[1], function (err, bytesRead, buffer) {
-                if (err) {
-                    complete(err, "");
-                    return;
-                }
-                complete(undefined, buffer.toString("utf8"));
-            });
+        if (typeof this._cache[String(key)] === "string") {
+            return this._cache[String(key)];
         }
-    };
-    SnapDB.prototype._readValueSync = function (key, useCache) {
-        var dataInfo = this._keyData[key];
-        if (!dataInfo) {
-            throw new Error("Key not found!");
-        }
-        else {
-            if (useCache && this.memoryCache && this._cache[key]) {
-                return this._cache[key];
-            }
-            var readBuffer = Buffer.alloc(dataInfo[2]);
-            fs.readSync(this._dataFiles[dataInfo[0]], readBuffer, 0, dataInfo[2], dataInfo[1]);
-            return readBuffer.toString("utf8");
-        }
+        return wasm.database_get(this._dbNum, String(key));
     };
     /**
      * Delete a key and it's value from the data store.
@@ -360,35 +150,19 @@ var SnapDB = /** @class */ (function () {
      * @memberof SnapDB
      */
     SnapDB.prototype.delete = function (key) {
-        var _this = this;
-        return new Promise(function (res, rej) {
-            if (!_this._isReady) {
-                rej("Database not ready!");
-                return;
-            }
-            var useKey = _this._makeKey(key);
-            var dataLoc = _this._keyData[useKey];
-            if (!dataLoc) { // key not found
-                rej();
-            }
-            else { // key found
-                _this._tombStream.write(useKey + "::" + [0, 0, 0].join(",") + "\n", "utf8", function (err) {
-                    if (err) {
-                        rej(err);
-                        return;
-                    }
-                    // write key to memory
-                    var wasmFNs = { "string": wasm.del_key_str, "int": wasm.del_key_int, "float": wasm.del_key };
-                    wasmFNs[_this.keyType](_this._indexNum, useKey);
-                    delete _this._keyData[useKey];
-                    // delete done
-                    res();
-                });
-            }
-        });
-    };
-    SnapDB.prototype._makeKey = function (key) {
-        return this.keyType === "string" ? Buffer.from(String(key), "utf8").toString("hex") : key;
+        if (!this._isReady) {
+            throw new Error("Database not ready!");
+        }
+        // delete key from memory
+        var wasmFNs = { "string": wasm.del_key_str, "int": wasm.del_key_int, "float": wasm.del_key };
+        wasmFNs[this.keyType](this._indexNum, key);
+        // delete key from database
+        var result = wasm.database_del(this._dbNum, String(key));
+        delete this._cache[String(key)];
+        if (result === 1) {
+            throw new Error("Unable to delete key! " + key);
+        }
+        return 0;
     };
     /**
      * Put a key and value into the data store.
@@ -400,61 +174,21 @@ var SnapDB = /** @class */ (function () {
      * @memberof SnapDB
      */
     SnapDB.prototype.put = function (key, data) {
-        var _this = this;
-        return new Promise(function (res, rej) {
-            if (!_this._isReady) {
-                rej("Database not ready!");
-                return;
-            }
-            var _writeData = function (dataValues, key, data) {
-                // write data
-                var count = 0;
-                _this._currentFileLen += dataValues[2];
-                _this._dataStreams[dataValues[0]].write(data, "utf8", function (err) {
-                    if (err) {
-                        rej(err);
-                        return;
-                    }
-                    count++;
-                    if (count === 1) {
-                        res();
-                    }
-                });
-                var keyValue = _this._makeKey(key);
-                if (!_this._keyData[keyValue]) {
-                    // write key to memory
-                    var wasmFNs = { "string": wasm.add_to_index_str, "int": wasm.add_to_index_int, "float": wasm.add_to_index };
-                    wasmFNs[_this.keyType](_this._indexNum, key);
-                }
-                _this._keyData[keyValue] = dataValues;
-                // write key data
-                _this._keyStream.write(keyValue + "::" + dataValues.join(",") + "\n", "utf8", function (err) {
-                    if (err) {
-                        rej(err);
-                        return;
-                    }
-                    if (_this.memoryCache) {
-                        _this._cache[keyValue] = data;
-                    }
-                    count++;
-                    if (count === 1) {
-                        res();
-                    }
-                });
-            };
-            var dataLen = data.length;
-            // 64 MB data file limit size
-            if (_this._currentFileLen + dataLen > 64000000) {
-                _this._currentFileIdx++;
-                _this._currentFileLen = 0;
-                _this._dataFiles[_this._currentFileIdx] = fs.openSync(path.join(_this._path, _this._currentFileIdx + ".data"), "w+");
-                _writeData([_this._currentFileIdx, 0, dataLen], key, data);
-            }
-            else {
-                var newDataValues = [_this._currentFileIdx, _this._currentFileLen, dataLen];
-                _writeData(newDataValues, key, data);
-            }
-        });
+        if (!this._isReady) {
+            throw new Error("Database not ready!");
+        }
+        // write key to memory
+        var wasmFNs = { "string": wasm.add_to_index_str, "int": wasm.add_to_index_int, "float": wasm.add_to_index };
+        wasmFNs[this.keyType](this._indexNum, key);
+        this._cache[String(key)] = this.memoryCache ? data : "";
+        // write data to database
+        var result = wasm.database_put(this._dbNum, String(key), data);
+        if (result === 0) {
+            return 0;
+        }
+        else {
+            throw new Error("Error writing value!");
+        }
     };
     /**
      * Get all keys from the data store in order.
@@ -483,11 +217,7 @@ var SnapDB = /** @class */ (function () {
             }
             else {
                 count++;
-                var dataKey = this._makeKey(nextKey);
-                if (this._keyData[dataKey]) {
-                    var thisKey = this.keyType !== "string" ? parseFloat(dataKey) : Buffer.from(dataKey, "hex").toString("utf8");
-                    onRecord(thisKey);
-                }
+                onRecord(nextKey);
                 lastKey = nextKey;
             }
         }
@@ -532,11 +262,8 @@ var SnapDB = /** @class */ (function () {
                 isDone = true;
             }
             else {
-                var dataKey = this._makeKey(nextKey);
-                if (this._keyData[dataKey]) {
-                    var value = this._readValueSync(dataKey, true);
-                    var thisKey = this.keyType !== "string" ? parseFloat(dataKey) : Buffer.from(dataKey, "hex").toString("utf8");
-                    onRecord(thisKey, value);
+                if (this._cache[String(nextKey)] || this._cache[String(nextKey)] === "") {
+                    onRecord(nextKey, this.get(nextKey));
                 }
                 lastKey = nextKey;
             }
@@ -572,11 +299,8 @@ var SnapDB = /** @class */ (function () {
                 isDone = true;
             }
             else {
-                var dataKey = this._makeKey(nextKey);
-                if (this._keyData[dataKey]) {
-                    var value = this._readValueSync(dataKey, true);
-                    var thisKey = this.keyType !== "string" ? parseFloat(dataKey) : Buffer.from(dataKey, "hex").toString("utf8");
-                    onRecord(thisKey, value);
+                if (this._cache[String(nextKey)]) {
+                    onRecord(nextKey, this.get(nextKey));
                 }
                 lastKey = nextKey;
             }
@@ -613,11 +337,8 @@ var SnapDB = /** @class */ (function () {
                 isDone = true;
             }
             else {
-                var dataKey = this._makeKey(nextKey);
-                if (this._keyData[dataKey]) {
-                    var value = this._readValueSync(dataKey, true);
-                    var thisKey = this.keyType !== "string" ? parseFloat(dataKey) : Buffer.from(dataKey, "hex").toString("utf8");
-                    onRecord(thisKey, value);
+                if (this._cache[String(nextKey)]) {
+                    onRecord(nextKey, this.get(nextKey));
                 }
                 lastKey = nextKey;
             }
@@ -628,46 +349,40 @@ var SnapDB = /** @class */ (function () {
     return SnapDB;
 }());
 exports.SnapDB = SnapDB;
-/*
 function makeid() {
     var text = "";
     var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-
     for (var i = 0; i < Math.ceil(Math.random() * 40) + 10; i++)
         text += possible.charAt(Math.floor(Math.random() * possible.length));
-
     return text;
 }
-
-
-const db = new SnapDB<string>("test", "string");
-db.ready().then(() => {
-    let arr: any[] = [];
-    let count = 10000;
-    for (let i = 1; i <= count; i++) {
+var db = new SnapDB("my-db", "int", true);
+db.ready().then(function () {
+    var arr = [];
+    var count = 10000;
+    for (var i = 1; i <= count; i++) {
         arr.push([i + 1, makeid(), makeid()]);
     }
-    arr = arr.sort((a, b) => Math.random() > 0.5 ? 1 : -1);
-    const writeStart = Date.now();
-    let last: any;
-    Promise.all(arr.map(r => {
+    arr = arr.sort(function (a, b) { return Math.random() > 0.5 ? 1 : -1; });
+    var writeStart = Date.now();
+    var last;
+    Promise.all(arr.map(function (r) {
         if (r[0] === 1029) {
             last = r[0];
             // console.log(r[2]);
         }
-        return db.put(r[1], r[2]);
-    })).then((data) => {
+        return db.put(r[0], r[2]);
+    })).then(function (data) {
         console.log((count / (Date.now() - writeStart) * 1000).toLocaleString(), "Records Per Second (WRITE)");
-        const start = Date.now();
+        var start = Date.now();
         console.time("READ");
-        db.offset(1000, 10, (key, data) => {
-            console.log(key, "=>", data);
-        }, (err) => {
+        db.getAll(function (key, data) {
+        }, function (err) {
             if (err) {
                 console.log(err);
             }
-            console.log(db.getCount(), (db.getCount() / (Date.now() - start) * 1000).toLocaleString(), "Records Per Second (READ)");
+            console.log((db.getCount() / (Date.now() - start) * 1000).toLocaleString(), "Records Per Second (READ)");
         }, false);
     });
-});*/ 
+});
 //# sourceMappingURL=index.js.map

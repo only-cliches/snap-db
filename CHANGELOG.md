@@ -2,6 +2,8 @@
 - Write Tests
 - Write Compaction Function
 
+# [0.0.4]
+
 # [0.0.3] 5-9-2019
 - Reduced memory footprint in WebAssembly.
 - Added key data storage to javascript for faster access.

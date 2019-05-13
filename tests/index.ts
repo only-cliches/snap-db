@@ -82,21 +82,19 @@ describe("SnapDB Tests", () => {
     it("Integer: Delete Key", (done: MochaDone) => {
         const thisValue = data["int"].splice(42, 1).pop() as [any, any];
 
-        db_int.delete(thisValue[0]).then(() => {
-            let dataFromDB: any[] = [];
-            db_int.getAll((key, value) => {
-                dataFromDB.push([key, value]);
-            }, () => {
-                try {
-                    expect(dataFromDB).to.deep.equal(data["int"], "Integer key not deleted!");
-                    done();
-                } catch (e) {
-                    done(e);
-                }
-            });
-        }).catch((e) => {
-            done(e);
+        db_int.delete(thisValue[0]);
+        let dataFromDB: any[] = [];
+        db_int.getAll((key, value) => {
+            dataFromDB.push([key, value]);
+        }, () => {
+            try {
+                expect(dataFromDB).to.deep.equal(data["int"], "Integer key not deleted!");
+                done();
+            } catch (e) {
+                done(e);
+            }
         });
+
     });
 
     it("Integer: Offset Select", (done: MochaDone) => {
@@ -183,21 +181,20 @@ describe("SnapDB Tests", () => {
     it("Float: Delete Key", (done: MochaDone) => {
         const thisValue = data["flt"].splice(42, 1).pop() as [any, any];
 
-        db_flt.delete(thisValue[0]).then(() => {
-            let dataFromDB: any[] = [];
-            db_flt.getAll((key, value) => {
-                dataFromDB.push([key, value]);
-            }, () => {
-                try {
-                    expect(dataFromDB).to.deep.equal(data["flt"], "Float key not deleted!");
-                    done();
-                } catch (e) {
-                    done(e);
-                }
-            });
-        }).catch((e) => {
-            done(e);
+        db_flt.delete(thisValue[0]);
+    
+        let dataFromDB: any[] = [];
+        db_flt.getAll((key, value) => {
+            dataFromDB.push([key, value]);
+        }, () => {
+            try {
+                expect(dataFromDB).to.deep.equal(data["flt"], "Float key not deleted!");
+                done();
+            } catch (e) {
+                done(e);
+            }
         });
+
     });
 
     it("Float: Offset Select", (done: MochaDone) => {
@@ -285,21 +282,19 @@ describe("SnapDB Tests", () => {
     it("String: Delete Key", (done: MochaDone) => {
         const thisValue = data["str"].splice(42, 1).pop() as [any, any];
 
-        db_str.delete(thisValue[0]).then(() => {
-            let dataFromDB: any[] = [];
-            db_str.getAll((key, value) => {
-                dataFromDB.push([key, value]);
-            }, () => {
-                try {
-                    expect(dataFromDB).to.deep.equal(data["str"], "String key not deleted!");
-                    done();
-                } catch (e) {
-                    done(e);
-                }
-            });
-        }).catch((e) => {
-            done(e);
+        db_str.delete(thisValue[0])
+        let dataFromDB: any[] = [];
+        db_str.getAll((key, value) => {
+            dataFromDB.push([key, value]);
+        }, () => {
+            try {
+                expect(dataFromDB).to.deep.equal(data["str"], "String key not deleted!");
+                done();
+            } catch (e) {
+                done(e);
+            }
         });
+ 
     });
 
     it("String: Offset Select", (done: MochaDone) => {

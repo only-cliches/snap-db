@@ -2,7 +2,7 @@
 
 if [ $1 == "--dev" ]; then 
     echo "Building WASM Index Code (Development)";
-    EMCC_DEBUG=1 emcc --js-library "index.js" index.cpp -l sqlite  -L . -s ERROR_ON_UNDEFINED_SYMBOLS=0 -s ALLOW_MEMORY_GROWTH=1 -s FORCE_FILESYSTEM=1 -s NODERAWFS=1 -s WASM=1 -std=c++11 -s SINGLE_FILE=1 --bind -o ../src/db.js;
+    emcc --js-library "index.js" mdb.o midl.o index.cpp -l liblmdb -L . -s ALLOW_MEMORY_GROWTH=1 -s FORCE_FILESYSTEM=1 -s NODERAWFS=1 -s WASM=1 -std=c++11 -s SINGLE_FILE=1 --bind -o db.js;
 else
     echo "Building WASM Index Code";
     emcc --js-library "index.js" index.cpp -l sqlite  -L . -s ERROR_ON_UNDEFINED_SYMBOLS=0 -s ALLOW_MEMORY_GROWTH=1 -s FORCE_FILESYSTEM=1 -s NODERAWFS=1 -s WASM=1 -std=c++11 -s SINGLE_FILE=1 -Os --bind -o ../src/db.js;

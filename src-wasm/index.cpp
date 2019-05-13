@@ -5,7 +5,7 @@
 #include <emscripten/bind.h>
 #include <vector>
 #include <time.h>
-#include "sqlite3.h"
+#include "lmdb.h"
 
 using namespace emscripten;
 
@@ -25,13 +25,13 @@ typedef std::map<unsigned int, char *> db_index_sorted_int;
 
 
 struct snapp_db {
-    sqlite3 * db;
+    MDB_env * env;
     int keyType;
     int index;
 };
 
 std::unordered_map<int, snapp_db> databases;
-std::unordered_map<int, sqlite3_stmt *> database_cursors;
+// std::unordered_map<int, sqlite3_stmt *> database_cursors;
 
 
 // global object containing list of indexes
@@ -712,26 +712,9 @@ std::string database_create(std::string file, int keyType) {
 
     const char *cstr = file.c_str();
 
-    int open = sqlite3_open(cstr, &thisDB.db);
-    if (open != SQLITE_OK) {
-        printf("ERROR opening DB: %s\n", sqlite3_errmsg(thisDB.db));
-        return "";
-    }
-
-    std::string newTable = "CREATE TABLE IF NOT EXISTS 'values' (id TEXT PRIMARY KEY UNIQUE, data TEXT);";
-
-    const char *sqlStr = newTable.c_str();
-
-    sqlite3_stmt *ppStmt;
-
-    sqlite3_prepare_v2(thisDB.db, sqlStr, -1, &ppStmt, NULL);
-
-    int result = sqlite3_step(ppStmt);
-    sqlite3_finalize(ppStmt);
-    if (result != SQLITE_DONE) {
-        printf("DB Error: %s\n", sqlite3_errmsg(thisDB.db));
-        return "";
-    }
+    mdb_env_create(&thisDB.env);
+    // mdb_env_set_mapsize(thisDB.env, 1099511627776);
+    mdb_env_open(thisDB.env, cstr, 0, 0664);
     
     switch(keyType) {
         case 0: // double
@@ -750,6 +733,7 @@ std::string database_create(std::string file, int keyType) {
     return std::to_string(loc) + "," + std::to_string(thisDB.index);
 }
 
+/*
 
 int database_put(int db, std::string key, std::string value) {
     struct snapp_db thisDB = databases[db];
@@ -876,7 +860,7 @@ std::string database_cursor_next(int db, int cursor, int count) {
         return "";
     }
 }
-
+*/
 
 EMSCRIPTEN_BINDINGS(my_module)
 {
@@ -916,10 +900,16 @@ EMSCRIPTEN_BINDINGS(my_module)
     function("read_index_int_next", &read_index_int_next);
 
     function("database_create", &database_create);
-    function("database_put", &database_put);
-    function("database_get", &database_get);
-    function("database_del", &database_del);
-    function("database_close", &database_close);
-    function("database_cursor", &database_cursor);
-    function("database_cursor_next", &database_cursor_next);
+    //function("database_put", &database_put);
+    //function("database_get", &database_get);
+    //function("database_del", &database_del);
+    //function("database_close", &database_close);
+    //function("database_cursor", &database_cursor);
+    //function("database_cursor_next", &database_cursor_next);
+}
+
+int main() {
+    database_create("my-db", 0);
+
+    return 0;
 }

@@ -5,7 +5,7 @@
 #include <emscripten/bind.h>
 #include <vector>
 #include <time.h>
-#include "lmdb.h"
+#include "sqlite3.h"
 
 using namespace emscripten;
 
@@ -25,13 +25,17 @@ typedef std::map<unsigned int, char *> db_index_sorted_int;
 
 
 struct snapp_db {
-    MDB_env * env;
+    sqlite3 * db;
+    sqlite3_stmt * put;
+    sqlite3_stmt * del;
+    sqlite3_stmt * get;
+    sqlite3_stmt * update;
     int keyType;
     int index;
 };
 
 std::unordered_map<int, snapp_db> databases;
-// std::unordered_map<int, sqlite3_stmt *> database_cursors;
+std::unordered_map<int, sqlite3_stmt *> database_cursors;
 
 
 // global object containing list of indexes
@@ -437,6 +441,9 @@ int read_index_offset_str(int index, int reverse, double offset)
             index_str_pointers[loc]++;
         }
     }
+    if (!reverse) {
+        index_str_pointers[loc]--;
+    }
     return loc;
 }
 
@@ -700,6 +707,7 @@ unsigned int read_index_offset_int_next(int index, int ptr, int reverse, double 
 
 // database code
 
+
 std::string database_create(std::string file, int keyType) {
     struct snapp_db thisDB;
 
@@ -712,9 +720,46 @@ std::string database_create(std::string file, int keyType) {
 
     const char *cstr = file.c_str();
 
-    mdb_env_create(&thisDB.env);
-    // mdb_env_set_mapsize(thisDB.env, 1099511627776);
-    mdb_env_open(thisDB.env, cstr, 0, 0664);
+    int open = sqlite3_open(cstr, &thisDB.db);
+    if (open != SQLITE_OK) {
+        printf("ERROR opening DB: %s\n", sqlite3_errmsg(thisDB.db));
+        return "";
+    }
+    std::string keyT = (keyType == 1 ? "TEXT" : "REAL");
+    std::string newTable = "CREATE TABLE IF NOT EXISTS 'values' (id " + keyT + " PRIMARY KEY UNIQUE, data TEXT);";
+
+    const char *sqlStr = newTable.c_str();
+
+    sqlite3_stmt *ppStmt;
+
+    sqlite3_prepare_v2(thisDB.db, sqlStr, -1, &ppStmt, NULL);
+
+    int result = sqlite3_step(ppStmt);
+    sqlite3_finalize(ppStmt);
+    if (result != SQLITE_DONE) {
+        printf("DB Error: %s\n", sqlite3_errmsg(thisDB.db));
+        return "";
+    }
+
+    // insert statement
+    std::string insertStmt = "INSERT INTO 'values' (id, data) VALUES(?, ?);";
+    const char *insertStr = insertStmt.c_str();
+    sqlite3_prepare_v2(thisDB.db, insertStr, -1, &thisDB.put, NULL);
+
+    // update statement
+    std::string updateStmt = "UPDATE 'values' SET data = ? WHERE id = ?;";
+    const char *updateStr = updateStmt.c_str();
+    sqlite3_prepare_v2(thisDB.db, updateStr, -1, &thisDB.update, NULL);
+
+    // get statement
+    std::string selectStmt = "SELECT data FROM 'values' WHERE id=?;";
+    const char *selectStr = selectStmt.c_str();
+    sqlite3_prepare_v2(thisDB.db, selectStr, -1, &thisDB.get, NULL);
+
+    // del statement
+    std::string delStmt = "DELETE FROM 'values' WHERE id = ?;";
+    const char *delStr = delStmt.c_str();
+    sqlite3_prepare_v2(thisDB.db, delStr, -1, &thisDB.del, NULL);
     
     switch(keyType) {
         case 0: // double
@@ -733,27 +778,31 @@ std::string database_create(std::string file, int keyType) {
     return std::to_string(loc) + "," + std::to_string(thisDB.index);
 }
 
-/*
 
-int database_put(int db, std::string key, std::string value) {
+int database_put(int db, int isNew, std::string key, std::string value) {
     struct snapp_db thisDB = databases[db];
     
-    std::string insertStmt = "INSERT INTO 'values' (id, data) VALUES(?, ?) ON CONFLICT(id) DO UPDATE SET data=?;";
-
-    const char *sqlStr = insertStmt.c_str();
     const char *keyStr = key.c_str();
     const char *valueStr = value.c_str();
 
-    sqlite3_stmt *ppStmt;
+    if (isNew) {
+        sqlite3_clear_bindings(thisDB.put);
+        sqlite3_reset(thisDB.put);
 
-    sqlite3_prepare_v2(thisDB.db, sqlStr, -1, &ppStmt, NULL);
-    sqlite3_bind_text(ppStmt, 1, keyStr, -1, SQLITE_STATIC);
-    sqlite3_bind_text(ppStmt, 2, valueStr, -1, SQLITE_STATIC);
-    sqlite3_bind_text(ppStmt, 3, valueStr, -1, SQLITE_STATIC);
+        sqlite3_bind_text(thisDB.put, 1, keyStr, -1, SQLITE_STATIC);
+        sqlite3_bind_text(thisDB.put, 2, valueStr, -1, SQLITE_STATIC);
 
-    sqlite3_step(ppStmt);
+        sqlite3_step(thisDB.put);
+    } else {
+        sqlite3_clear_bindings(thisDB.update);
+        sqlite3_reset(thisDB.update);
 
-    sqlite3_finalize(ppStmt);
+        sqlite3_bind_text(thisDB.update, 1, valueStr, -1, SQLITE_STATIC);
+        sqlite3_bind_text(thisDB.update, 2, keyStr, -1, SQLITE_STATIC);
+        
+        sqlite3_step(thisDB.update);
+    }
+
 
     return 0;
 }
@@ -762,56 +811,50 @@ std::string database_get(int db, std::string key) {
 
     struct snapp_db thisDB = databases[db];
 
-    std::string selectStmt = "SELECT data FROM 'values' WHERE id=?;";
-
-    const char *sqlStr = selectStmt.c_str();
     const char *keyStr = key.c_str();
 
-    sqlite3_stmt *ppStmt;
+    sqlite3_clear_bindings(thisDB.get);
+    sqlite3_reset(thisDB.get);
 
-    sqlite3_prepare_v2(thisDB.db, sqlStr, -1, &ppStmt, NULL);
-    sqlite3_bind_text(ppStmt, 1, keyStr, -1, SQLITE_STATIC);
+    sqlite3_bind_text(thisDB.get, 1, keyStr, -1, SQLITE_STATIC);
 
-    int rc = sqlite3_step(ppStmt);
+    int rc = sqlite3_step(thisDB.get);
 
     if (rc == SQLITE_ROW) {
         std::string result = std::string(reinterpret_cast<const char*>(
-        sqlite3_column_text(ppStmt, 0)
+            sqlite3_column_text(thisDB.get, 0)
         ));
-        sqlite3_finalize(ppStmt);
+
+
         return result;
     } else {
-        sqlite3_finalize(ppStmt);
+
         return "";
     }
 }
 
-
-
 int database_del(int db, std::string key) {
     struct snapp_db thisDB = databases[db];
     
-    std::string insertStmt = "DELETE FROM 'values' WHERE id = ?;";
-
-    const char *sqlStr = insertStmt.c_str();
     const char *keyStr = key.c_str();
 
-    sqlite3_stmt *ppStmt;
+    sqlite3_clear_bindings(thisDB.del);
+    sqlite3_reset(thisDB.del);
 
-    sqlite3_prepare_v2(thisDB.db, sqlStr, -1, &ppStmt, NULL);
-    sqlite3_bind_text(ppStmt, 1, keyStr, -1, SQLITE_STATIC);
+    sqlite3_bind_text(thisDB.del, 1, keyStr, -1, SQLITE_STATIC);
 
-    sqlite3_step(ppStmt);
-
-    sqlite3_finalize(ppStmt);
+    sqlite3_step(thisDB.del);
 
     return 0;
 }
 
-
-
 int database_close(int db) {
+    sqlite3_finalize(databases[db].put);
+    sqlite3_finalize(databases[db].del);
+    sqlite3_finalize(databases[db].get);
+    sqlite3_finalize(databases[db].update);
     sqlite3_close(databases[db].db);
+    
     databases.erase(db);
     return 0;
 }
@@ -860,7 +903,18 @@ std::string database_cursor_next(int db, int cursor, int count) {
         return "";
     }
 }
-*/
+
+int database_start_tx(int db) {
+    struct snapp_db thisDB = databases[db];
+    sqlite3_exec(thisDB.db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
+    return 0;
+}
+
+int database_end_tx(int db) {
+    struct snapp_db thisDB = databases[db];
+    sqlite3_exec(thisDB.db, "END TRANSACTION;", NULL, NULL, NULL);
+    return 0;
+}
 
 EMSCRIPTEN_BINDINGS(my_module)
 {
@@ -900,16 +954,12 @@ EMSCRIPTEN_BINDINGS(my_module)
     function("read_index_int_next", &read_index_int_next);
 
     function("database_create", &database_create);
-    //function("database_put", &database_put);
-    //function("database_get", &database_get);
-    //function("database_del", &database_del);
-    //function("database_close", &database_close);
-    //function("database_cursor", &database_cursor);
-    //function("database_cursor_next", &database_cursor_next);
-}
-
-int main() {
-    database_create("my-db", 0);
-
-    return 0;
+    function("database_put", &database_put);
+    function("database_get", &database_get);
+    function("database_del", &database_del);
+    function("database_close", &database_close);
+    function("database_cursor", &database_cursor);
+    function("database_cursor_next", &database_cursor_next);
+    function("database_start_tx", &database_start_tx);
+    function("database_end_tx", &database_end_tx);
 }

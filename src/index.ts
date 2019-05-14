@@ -39,9 +39,7 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     private _loadCache(complete: () => void, onErr: (err) => void) {
-        let allDone = false;
-        let count = 0;
-        let hasErr = false;
+
         const wasmFNs = { "string": wasm.get_total_str, "int": wasm.get_total_int, "float": wasm.get_total };
         const total = wasmFNs[this.keyType](this._indexNum);
 
@@ -152,7 +150,7 @@ export class SnapDB<K> {
         if (!this._isReady) {
             throw new Error("Database not ready!");
         }
-        if (typeof this._cache[String(key)] === "string") {
+        if (typeof this._cache[String(key)] && this._cache[String(key)].length) {
             return this._cache[String(key)];
         }
         return wasm.database_get(this._dbNum, String(key));
@@ -203,7 +201,7 @@ export class SnapDB<K> {
         
 
         // write data to database
-        const result = wasm.database_put(this._dbNum, String(key), data);
+        const result = wasm.database_put(this._dbNum, this._cache[String(key)] === undefined ? 1 : 0, String(key), data);
         this._cache[String(key)] = this.memoryCache ? data : "";
 
         if (result === 0) {
@@ -249,6 +247,14 @@ export class SnapDB<K> {
         onComplete();
     }
 
+    public begin_transaction() {
+        wasm.database_start_tx(this._indexNum);
+    }
+
+    public end_transaction() {
+        wasm.database_end_tx(this._indexNum);
+    }
+
     /**
      * Get the total number of keys in the data store.
      *
@@ -290,7 +296,7 @@ export class SnapDB<K> {
             if (nextKey === lastKey) {
                 isDone = true;
             } else {
-                if (this._cache[String(nextKey)] || this._cache[String(nextKey)] === "") {
+                if (this._cache[String(nextKey)] !== undefined) {
                     onRecord(nextKey, this.get(nextKey));
                 }
                 lastKey = nextKey;
@@ -330,7 +336,7 @@ export class SnapDB<K> {
             if (nextKey === lastKey) {
                 isDone = true;
             } else {
-                if (this._cache[String(nextKey)]) {
+                if (this._cache[String(nextKey)] !== undefined) {
                     onRecord(nextKey, this.get(nextKey));
                 }
                 lastKey = nextKey;
@@ -370,7 +376,7 @@ export class SnapDB<K> {
             if (nextKey === lastKey) {
                 isDone = true;
             } else {
-                if (this._cache[String(nextKey)]) {
+                if (this._cache[String(nextKey)] !== undefined) {
                     onRecord(nextKey, this.get(nextKey));
                 }
                 lastKey = nextKey;
@@ -382,7 +388,7 @@ export class SnapDB<K> {
     
 }
 
-
+/*
 function makeid() {
     var text = "";
     var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -394,7 +400,7 @@ function makeid() {
 }
 
 
-const db = new SnapDB<number>("my-db", "int", true);
+const db = new SnapDB<number>("my-db-test", "int");
 db.ready().then(() => {
 
     let arr: any[] = [];
@@ -406,23 +412,25 @@ db.ready().then(() => {
     arr = arr.sort((a, b) => Math.random() > 0.5 ? 1 : -1);
     const writeStart = Date.now();
     let last: any;
-    Promise.all(arr.map(r => {
+    db.begin_transaction();
+    arr.forEach(r => {
         if (r[0] === 1029) {
             last = r[0];
             // console.log(r[2]);
         }
-        return db.put(r[0], r[2]);
-    })).then((data) => {
-        console.log((count / (Date.now() - writeStart) * 1000).toLocaleString(), "Records Per Second (WRITE)");
-        const start = Date.now();
-        console.time("READ");
-        db.getAll((key, data) => {
+        db.put(r[0], r[2]);
+    })
+    db.end_transaction();
+    console.log((count / (Date.now() - writeStart) * 1000).toLocaleString(), "Records Per Second (WRITE)");
+    const start = Date.now();
+    console.time("READ");
+    db.getAll((key, data) => {
+        // console.log(key, data);
+    }, (err) => {
+        if (err) {
+            console.log(err);
+        }
+        console.log((db.getCount() / (Date.now() - start) * 1000).toLocaleString(), "Records Per Second (READ)");
+    }, false);
 
-        }, (err) => {
-            if (err) {
-                console.log(err);
-            }
-            console.log((db.getCount() / (Date.now() - start) * 1000).toLocaleString(), "Records Per Second (READ)");
-        }, false);
-    });
-});
+});*/

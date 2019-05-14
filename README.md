@@ -10,13 +10,13 @@ SnapDB is a persistent key-value store that provides ordered mapping from keys t
 - Zero dependencies.
 - Zero compiling.
 - Zero configuring.
-- On-disk database stored in a single file.
 - Constant time range & offset/limit queries.
 - Optimized with WebAssembly indexes.
 - Typescript & Babel friendly.
 - Works in NodeJS or NodeJS like environments.
 - Keys are sorted, allowing *very fast* range queries.
 - Data is durable in the face of application or power failure.
+- Data is stored in SQLite database format.
 
 ## Installation
 
@@ -74,13 +74,13 @@ The three `keyType`s correspond to different data types in WebAssembly.  Larger 
 Call on database initialization to know when the database is ready.
 
 
-#### .put(key: any, data: string):number
+#### .put(key: any, data: string): void
 Puts data into the database at the provided key.
 
 #### .get(key: any):string
 Used to get the value of a single key.
 
-#### .delete(key: any):number
+#### .delete(key: any): void
 Deletes a key and it's value from the database.
 
 #### .getAllKeys(onKey: (key: any) => void, onComplete: (err?: any) => void, reverse?: boolean): void;

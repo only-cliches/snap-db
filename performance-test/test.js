@@ -1,5 +1,6 @@
 var level = require('level');
 var rimraf = require("rimraf");
+const fs = require("fs");
 const SnapDB = require("../bin/index.js").SnapDB;
 
 
@@ -49,14 +50,26 @@ const testLevelDB = (sampleData) => {
 
 const testSnapDB = (sampleData) => {
     return new Promise((res, rej) => {
-        rimraf.sync("my_db");
-        var db = new SnapDB("my_db", "int", true);
+        try {
+            fs.unlinkSync("my_db");
+        } catch(e) {
+
+        }
+        
+        var db = new SnapDB("my_db", "string");
         let start = 0;
+        let writeSpeed = 0;
         db.ready().then(() => {
             start = Date.now();
-            return Promise.all(sampleData.map((s, i) => db.put(i, s[1])));
+            db.begin_transaction();
+            sampleData.forEach((s, i) => {
+                db.put(s[0], s[1]);
+            });
+            db.end_transaction();
+            writeSpeed = Math.round(sampleData.length / (Date.now() - start) * 1000);
+            return Promise.resolve();
         }).then(() => {
-            let writeSpeed = Math.round(sampleData.length / (Date.now() - start) * 1000);
+            
             start = Date.now();
             let count = 0;
             db.getAll((key, data) => {
@@ -74,7 +87,7 @@ const testSnapDB = (sampleData) => {
 // make 100,000 records for both databases
 
 let data = [];
-for (let i = 0; i < 100000; i++) {
+for (let i = 0; i < 10000; i++) {
     data.push([makeid(10), makeid()]);
 }
 
@@ -85,7 +98,7 @@ const testSnapDBMany = () => {
         if (results2.length < 5) {
             testSnapDBMany();
         } else {
-            rimraf.sync("my_db");
+            
             console.log("Snap DB");
             console.log(Math.round(results2.reduce((p, c) => (p[1] || 0) + c[1])/results2.length).toLocaleString(), "op/s (WRITE)");
             console.log(Math.round(results2.reduce((p, c) => (p[0] || 0) + c[0])/results2.length).toLocaleString(), "op/s (READ)");

@@ -28,9 +28,6 @@ var SnapDB = /** @class */ (function () {
      */
     SnapDB.prototype._loadCache = function (complete, onErr) {
         var _this = this;
-        var allDone = false;
-        var count = 0;
-        var hasErr = false;
         var wasmFNs = { "string": wasm.get_total_str, "int": wasm.get_total_int, "float": wasm.get_total };
         var total = wasmFNs[this.keyType](this._indexNum);
         if (total === 0 || !this.memoryCache) {
@@ -137,7 +134,7 @@ var SnapDB = /** @class */ (function () {
         if (!this._isReady) {
             throw new Error("Database not ready!");
         }
-        if (typeof this._cache[String(key)] === "string") {
+        if (typeof this._cache[String(key)] && this._cache[String(key)].length) {
             return this._cache[String(key)];
         }
         return wasm.database_get(this._dbNum, String(key));
@@ -181,7 +178,7 @@ var SnapDB = /** @class */ (function () {
         var wasmFNs = { "string": wasm.add_to_index_str, "int": wasm.add_to_index_int, "float": wasm.add_to_index };
         wasmFNs[this.keyType](this._indexNum, key);
         // write data to database
-        var result = wasm.database_put(this._dbNum, String(key), data);
+        var result = wasm.database_put(this._dbNum, this._cache[String(key)] === undefined ? 1 : 0, String(key), data);
         this._cache[String(key)] = this.memoryCache ? data : "";
         if (result === 0) {
             return 0;
@@ -223,6 +220,12 @@ var SnapDB = /** @class */ (function () {
         }
         onComplete();
     };
+    SnapDB.prototype.begin_transaction = function () {
+        wasm.database_start_tx(this._indexNum);
+    };
+    SnapDB.prototype.end_transaction = function () {
+        wasm.database_end_tx(this._indexNum);
+    };
     /**
      * Get the total number of keys in the data store.
      *
@@ -262,7 +265,7 @@ var SnapDB = /** @class */ (function () {
                 isDone = true;
             }
             else {
-                if (this._cache[String(nextKey)] || this._cache[String(nextKey)] === "") {
+                if (this._cache[String(nextKey)] !== undefined) {
                     onRecord(nextKey, this.get(nextKey));
                 }
                 lastKey = nextKey;
@@ -299,7 +302,7 @@ var SnapDB = /** @class */ (function () {
                 isDone = true;
             }
             else {
-                if (this._cache[String(nextKey)]) {
+                if (this._cache[String(nextKey)] !== undefined) {
                     onRecord(nextKey, this.get(nextKey));
                 }
                 lastKey = nextKey;
@@ -337,7 +340,7 @@ var SnapDB = /** @class */ (function () {
                 isDone = true;
             }
             else {
-                if (this._cache[String(nextKey)]) {
+                if (this._cache[String(nextKey)] !== undefined) {
                     onRecord(nextKey, this.get(nextKey));
                 }
                 lastKey = nextKey;
@@ -349,40 +352,50 @@ var SnapDB = /** @class */ (function () {
     return SnapDB;
 }());
 exports.SnapDB = SnapDB;
+/*
 function makeid() {
     var text = "";
     var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
     for (var i = 0; i < Math.ceil(Math.random() * 40) + 10; i++)
         text += possible.charAt(Math.floor(Math.random() * possible.length));
+
     return text;
 }
-var db = new SnapDB("my-db", "int", true);
-db.ready().then(function () {
-    var arr = [];
-    var count = 10000;
-    for (var i = 1; i <= count; i++) {
+
+
+const db = new SnapDB<number>("my-db-test", "int");
+db.ready().then(() => {
+
+    let arr: any[] = [];
+    let count = 10000;
+    for (let i = 1; i <= count; i++) {
         arr.push([i + 1, makeid(), makeid()]);
     }
-    arr = arr.sort(function (a, b) { return Math.random() > 0.5 ? 1 : -1; });
-    var writeStart = Date.now();
-    var last;
-    Promise.all(arr.map(function (r) {
+
+    arr = arr.sort((a, b) => Math.random() > 0.5 ? 1 : -1);
+    const writeStart = Date.now();
+    let last: any;
+    db.begin_transaction();
+    arr.forEach(r => {
         if (r[0] === 1029) {
             last = r[0];
             // console.log(r[2]);
         }
-        return db.put(r[0], r[2]);
-    })).then(function (data) {
-        console.log((count / (Date.now() - writeStart) * 1000).toLocaleString(), "Records Per Second (WRITE)");
-        var start = Date.now();
-        console.time("READ");
-        db.getAll(function (key, data) {
-        }, function (err) {
-            if (err) {
-                console.log(err);
-            }
-            console.log((db.getCount() / (Date.now() - start) * 1000).toLocaleString(), "Records Per Second (READ)");
-        }, false);
-    });
-});
+        db.put(r[0], r[2]);
+    })
+    db.end_transaction();
+    console.log((count / (Date.now() - writeStart) * 1000).toLocaleString(), "Records Per Second (WRITE)");
+    const start = Date.now();
+    console.time("READ");
+    db.getAll((key, data) => {
+        // console.log(key, data);
+    }, (err) => {
+        if (err) {
+            console.log(err);
+        }
+        console.log((db.getCount() / (Date.now() - start) * 1000).toLocaleString(), "Records Per Second (READ)");
+    }, false);
+
+});*/ 
 //# sourceMappingURL=index.js.map

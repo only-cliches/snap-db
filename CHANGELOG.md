@@ -1,8 +1,9 @@
 # TODO
-- Write Tests
-- Write Compaction Function
+- Handle sqlite errors
 
 # [0.0.4]
+- Switched to SQLite storage backend.
+- Added tests
 
 # [0.0.3] 5-9-2019
 - Reduced memory footprint in WebAssembly.

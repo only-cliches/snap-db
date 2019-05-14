@@ -74,6 +74,8 @@ export declare class SnapDB<K> {
      * @memberof SnapDB
      */
     getAllKeys(onRecord: (key: K) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
+    begin_transaction(): void;
+    end_transaction(): void;
     /**
      * Get the total number of keys in the data store.
      *

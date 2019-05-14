@@ -1,6 +1,6 @@
 {
   "name": "snap-db",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Simple & Blazing Fast Javascript/Webassembly key-value store",
   "main": "bin/index.js",
   "scripts": {
@@ -19,7 +19,8 @@
     "db",
     "data-store",
     "memcache",
-    "memorycache"
+    "memorycache",
+    "sqlite"
   ],
   "author": "Scott Lott <Scott@ClickSimply.com>",
   "license": "MIT",

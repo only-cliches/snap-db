@@ -3,7 +3,8 @@
 
 # [0.0.4]
 - Switched to SQLite storage backend.
-- Added tests
+- Added tests.
+- WASM is now in one file.
 
 # [0.0.3] 5-9-2019
 - Reduced memory footprint in WebAssembly.

@@ -1,11 +1,10 @@
+export declare const rand: () => string;
 export declare class SnapDB<K> {
     keyType: "string" | "float" | "int";
     memoryCache?: boolean | undefined;
     private _isReady;
-    private _indexNum;
-    _dbNum: number;
     private _path;
-    private _cache;
+    private _worker;
     /**
      * Creates an instance of SnapDB.
      *
@@ -16,45 +15,21 @@ export declare class SnapDB<K> {
      */
     constructor(fileName: string, keyType: "string" | "float" | "int", memoryCache?: boolean | undefined);
     /**
-     * Loads previously saved data into cache if cache is enabled.
-     *
-     * @private
-     * @param {() => void} complete
-     * @param {(err) => void} onErr
-     * @returns
-     * @memberof SnapDB
-     */
-    private _loadCache;
-    /**
-     * Check if WASM module has been initiliazed.
-     *
-     * @private
-     * @memberof SnapDB
-     */
-    private _checkWasmReady;
-    /**
-     * Get all the keys from unqlite and load them into index
-     *
-     * @private
-     * @memberof SnapDB
-     */
-    private _loadKeys;
-    /**
      * This promise returns when the database is ready to use.
      *
      * @returns {Promise<any>}
      * @memberof SnapDB
      */
     ready(): Promise<any>;
-    get(key: K): string;
+    get(key: K): Promise<string>;
     /**
      * Delete a key and it's value from the data store.
      *
      * @param {K} key
-     * @returns {Promise<boolean>}
+     * @returns {Promise<any>}
      * @memberof SnapDB
      */
-    delete(key: K): number;
+    delete(key: K): Promise<any>;
     /**
      * Put a key and value into the data store.
      * Replaces existing values with new values at the given key, otherwise creates a new key.
@@ -64,7 +39,7 @@ export declare class SnapDB<K> {
      * @returns {Promise<any>}
      * @memberof SnapDB
      */
-    put(key: K, data: string): number;
+    put(key: K, data: string): Promise<any>;
     /**
      * Get all keys from the data store in order.
      *
@@ -74,15 +49,27 @@ export declare class SnapDB<K> {
      * @memberof SnapDB
      */
     getAllKeys(onRecord: (key: K) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
-    begin_transaction(): void;
-    end_transaction(): void;
+    /**
+     * Starts a transaction.
+     *
+     * @returns {Promise<any>}
+     * @memberof SnapDB
+     */
+    begin_transaction(): Promise<any>;
+    /**
+     * Ends a transaction.
+     *
+     * @returns
+     * @memberof SnapDB
+     */
+    end_transaction(): Promise<any>;
     /**
      * Get the total number of keys in the data store.
      *
-     * @returns {number}
+     * @returns {Promise<number>}
      * @memberof SnapDB
      */
-    getCount(): number;
+    getCount(): Promise<number>;
     /**
      * Get all keys and values from the store in order.
      *
@@ -115,4 +102,18 @@ export declare class SnapDB<K> {
      * @memberof SnapDB
      */
     offset(offset: number, limit: number, onRecord: (key: K, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
+    /**
+     * Closes database
+     *
+     * @returns {Promise<any>}
+     * @memberof SnapDB
+     */
+    close(): Promise<any>;
+    /**
+     * Empty all keys and values from database.
+     *
+     * @returns {Promise<any>}
+     * @memberof SnapDB
+     */
+    empty(): Promise<any>;
 }

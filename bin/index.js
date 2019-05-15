@@ -1,6 +1,14 @@
 Object.defineProperty(exports, "__esModule", { value: true });
-var wasm = require("./db.js");
 var path = require("path");
+var child_process_1 = require("child_process");
+var messageBuffer = {};
+exports.rand = function () {
+    var text = "";
+    var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    for (var i = 0; i < 6; i++)
+        text += possible.charAt(Math.floor(Math.random() * possible.length));
+    return text;
+};
 var SnapDB = /** @class */ (function () {
     /**
      * Creates an instance of SnapDB.
@@ -11,105 +19,27 @@ var SnapDB = /** @class */ (function () {
      * @memberof SnapDB
      */
     function SnapDB(fileName, keyType, memoryCache) {
+        var _this = this;
         this.keyType = keyType;
         this.memoryCache = memoryCache;
-        this._cache = {};
         this._path = fileName === ":memory:" ? fileName : (path.isAbsolute(fileName) ? fileName : path.join(process.cwd(), fileName));
-        this._checkWasmReady();
-    }
-    /**
-     * Loads previously saved data into cache if cache is enabled.
-     *
-     * @private
-     * @param {() => void} complete
-     * @param {(err) => void} onErr
-     * @returns
-     * @memberof SnapDB
-     */
-    SnapDB.prototype._loadCache = function (complete, onErr) {
-        var _this = this;
-        var wasmFNs = { "string": wasm.get_total_str, "int": wasm.get_total_int, "float": wasm.get_total };
-        var total = wasmFNs[this.keyType](this._indexNum);
-        if (total === 0 || !this.memoryCache) {
-            complete();
-            return;
-        }
-        this.getAllKeys(function (key) {
-            _this._cache[String(key)] = wasm.database_get(_this._dbNum, String(key));
-        }, function () {
-            complete();
+        this._worker = child_process_1.fork(path.join(__dirname, "child.js"));
+        this._worker.on("message", function (msg) {
+            switch (msg.type) {
+                case "snap-ready":
+                    _this._isReady = true;
+                    break;
+                case "snap-res":
+                    messageBuffer[msg.id].apply(null, [msg.data]);
+                    break;
+                case "snap-res-done":
+                    messageBuffer[msg.id].apply(null, [msg.data]);
+                    delete messageBuffer[msg.id];
+                    break;
+            }
         });
-    };
-    /**
-     * Check if WASM module has been initiliazed.
-     *
-     * @private
-     * @memberof SnapDB
-     */
-    SnapDB.prototype._checkWasmReady = function () {
-        var _this = this;
-        var checkReady = function () {
-            if (wasm.loaded) {
-                var dbData = wasm.database_create(_this._path, { "float": 0, "string": 1, "int": 2 }[_this.keyType]);
-                if (!dbData) {
-                    throw new Error("Unable to connect to database at " + _this._path);
-                }
-                _this._indexNum = parseInt(dbData.split(",")[1]);
-                _this._dbNum = parseInt(dbData.split(",")[0]);
-                _this._loadKeys();
-            }
-            else {
-                setTimeout(checkReady, 100);
-            }
-        };
-        checkReady();
-    };
-    /**
-     * Get all the keys from unqlite and load them into index
-     *
-     * @private
-     * @memberof SnapDB
-     */
-    SnapDB.prototype._loadKeys = function () {
-        var _this = this;
-        var ptr = wasm.database_cursor(this._dbNum);
-        var nextKey = 0;
-        var lastKey;
-        var isDone = false;
-        var count = 0;
-        while (!isDone) {
-            nextKey = wasm.database_cursor_next(this._dbNum, ptr, count);
-            if (count === 0 && !nextKey) {
-                isDone = true;
-            }
-            else {
-                if (nextKey === lastKey) {
-                    isDone = true;
-                }
-                else {
-                    var dataKey = this.keyType === "string" ? nextKey : parseFloat(nextKey);
-                    // write key to memory
-                    var wasmFNs = { "string": wasm.add_to_index_str, "int": wasm.add_to_index_int, "float": wasm.add_to_index };
-                    if (nextKey !== "") {
-                        this._cache[String(nextKey)] = "";
-                        wasmFNs[this.keyType](this._indexNum, dataKey);
-                    }
-                    lastKey = nextKey;
-                }
-                count++;
-            }
-        }
-        if (this.memoryCache) {
-            this._loadCache(function () {
-                _this._isReady = true;
-            }, function (err) {
-                throw new Error(err);
-            });
-        }
-        else {
-            this._isReady = true;
-        }
-    };
+        this._worker.send({ type: "snap-connect", path: this._path, cache: this.memoryCache, keyType: this.keyType });
+    }
     /**
      * This promise returns when the database is ready to use.
      *
@@ -131,35 +61,55 @@ var SnapDB = /** @class */ (function () {
         });
     };
     SnapDB.prototype.get = function (key) {
-        if (!this._isReady) {
-            throw new Error("Database not ready!");
-        }
-        if (typeof this._cache[String(key)] && this._cache[String(key)].length) {
-            return this._cache[String(key)];
-        }
-        return wasm.database_get(this._dbNum, String(key));
+        var _this = this;
+        return new Promise(function (res, rej) {
+            if (!_this._isReady) {
+                rej("Database not ready!");
+                return;
+            }
+            var msgId = exports.rand();
+            while (messageBuffer[msgId]) {
+                msgId = exports.rand();
+            }
+            messageBuffer[msgId] = function (data) {
+                if (data[0]) {
+                    rej(data[0]);
+                }
+                else {
+                    res(data[1]);
+                }
+            };
+            _this._worker.send({ type: "snap-get", key: key, id: msgId });
+        });
     };
     /**
      * Delete a key and it's value from the data store.
      *
      * @param {K} key
-     * @returns {Promise<boolean>}
+     * @returns {Promise<any>}
      * @memberof SnapDB
      */
     SnapDB.prototype.delete = function (key) {
-        if (!this._isReady) {
-            throw new Error("Database not ready!");
-        }
-        // delete key from memory
-        var wasmFNs = { "string": wasm.del_key_str, "int": wasm.del_key_int, "float": wasm.del_key };
-        wasmFNs[this.keyType](this._indexNum, key);
-        // delete key from database
-        var result = wasm.database_del(this._dbNum, String(key));
-        delete this._cache[String(key)];
-        if (result === 1) {
-            throw new Error("Unable to delete key! " + key);
-        }
-        return 0;
+        var _this = this;
+        return new Promise(function (res, rej) {
+            if (!_this._isReady) {
+                rej("Database not ready!");
+                return;
+            }
+            var msgId = exports.rand();
+            while (messageBuffer[msgId]) {
+                msgId = exports.rand();
+            }
+            messageBuffer[msgId] = function (data) {
+                if (data[0]) {
+                    rej(data[0]);
+                }
+                else {
+                    res(data[1]);
+                }
+            };
+            _this._worker.send({ type: "snap-del", key: key, id: msgId });
+        });
     };
     /**
      * Put a key and value into the data store.
@@ -171,21 +121,26 @@ var SnapDB = /** @class */ (function () {
      * @memberof SnapDB
      */
     SnapDB.prototype.put = function (key, data) {
-        if (!this._isReady) {
-            throw new Error("Database not ready!");
-        }
-        // write key to memory
-        var wasmFNs = { "string": wasm.add_to_index_str, "int": wasm.add_to_index_int, "float": wasm.add_to_index };
-        wasmFNs[this.keyType](this._indexNum, key);
-        // write data to database
-        var result = wasm.database_put(this._dbNum, this._cache[String(key)] === undefined ? 1 : 0, String(key), data);
-        this._cache[String(key)] = this.memoryCache ? data : "";
-        if (result === 0) {
-            return 0;
-        }
-        else {
-            throw new Error("Error writing value!");
-        }
+        var _this = this;
+        return new Promise(function (res, rej) {
+            if (!_this._isReady) {
+                rej("Database not ready!");
+                return;
+            }
+            var msgId = exports.rand();
+            while (messageBuffer[msgId]) {
+                msgId = exports.rand();
+            }
+            messageBuffer[msgId] = function (data) {
+                if (data[0]) {
+                    rej(data[0]);
+                }
+                else {
+                    res(data[1]);
+                }
+            };
+            _this._worker.send({ type: "snap-put", key: key, value: data, id: msgId });
+        });
     };
     /**
      * Get all keys from the data store in order.
@@ -200,44 +155,103 @@ var SnapDB = /** @class */ (function () {
             onComplete("Database not ready!");
             return;
         }
-        var wasmFNs = { "string": wasm.read_index_str, "int": wasm.read_index_int, "float": wasm.read_index };
-        var wasmFNs2 = { "string": wasm.read_index_str_next, "int": wasm.read_index_int_next, "float": wasm.read_index_next };
-        var it = wasmFNs[this.keyType](this._indexNum, reverse ? 1 : 0);
-        var nextKey = 0;
-        var lastKey;
-        var isDone = false;
-        var count = 0;
-        while (!isDone) {
-            nextKey = wasmFNs2[this.keyType](this._indexNum, it, reverse ? 1 : 0, count);
-            if (nextKey === lastKey) {
-                isDone = true;
+        var msgId = exports.rand();
+        while (messageBuffer[msgId]) {
+            msgId = exports.rand();
+        }
+        messageBuffer[msgId] = function (data) {
+            if (data[0] === "response") {
+                onRecord(data[1]);
             }
             else {
-                count++;
-                onRecord(nextKey);
-                lastKey = nextKey;
+                onComplete();
             }
-        }
-        onComplete();
+        };
+        this._worker.send({ type: "snap-get-all-keys", id: msgId, reverse: reverse });
     };
+    /**
+     * Starts a transaction.
+     *
+     * @returns {Promise<any>}
+     * @memberof SnapDB
+     */
     SnapDB.prototype.begin_transaction = function () {
-        wasm.database_start_tx(this._indexNum);
+        var _this = this;
+        return new Promise(function (res, rej) {
+            if (!_this._isReady) {
+                rej("Database not ready!");
+                return;
+            }
+            var msgId = exports.rand();
+            while (messageBuffer[msgId]) {
+                msgId = exports.rand();
+            }
+            messageBuffer[msgId] = function (data) {
+                if (data[0]) {
+                    rej(data[0]);
+                }
+                else {
+                    res();
+                }
+            };
+            _this._worker.send({ type: "snap-start-tx", id: msgId });
+        });
     };
+    /**
+     * Ends a transaction.
+     *
+     * @returns
+     * @memberof SnapDB
+     */
     SnapDB.prototype.end_transaction = function () {
-        wasm.database_end_tx(this._indexNum);
+        var _this = this;
+        return new Promise(function (res, rej) {
+            if (!_this._isReady) {
+                rej("Database not ready!");
+                return;
+            }
+            var msgId = exports.rand();
+            while (messageBuffer[msgId]) {
+                msgId = exports.rand();
+            }
+            messageBuffer[msgId] = function (data) {
+                if (data[0]) {
+                    rej(data[0]);
+                }
+                else {
+                    res();
+                }
+            };
+            _this._worker.send({ type: "snap-end-tx", id: msgId });
+        });
     };
     /**
      * Get the total number of keys in the data store.
      *
-     * @returns {number}
+     * @returns {Promise<number>}
      * @memberof SnapDB
      */
     SnapDB.prototype.getCount = function () {
-        if (!this._isReady) {
-            throw new Error("Database not ready!");
-        }
-        var wasmFNs = { "string": wasm.get_total_str, "int": wasm.get_total_int, "float": wasm.get_total };
-        return wasmFNs[this.keyType](this._indexNum);
+        var _this = this;
+        return new Promise(function (res, rej) {
+            if (!_this._isReady) {
+                rej("Database not ready!");
+                return;
+            }
+            var msgId = exports.rand();
+            while (messageBuffer[msgId]) {
+                msgId = exports.rand();
+            }
+            messageBuffer[msgId] = function (data) {
+                if (data[0]) {
+                    rej(data[0]);
+                }
+                else {
+                    res(parseInt(data[1]));
+                }
+            };
+            _this._worker.send({ type: "snap-count", id: msgId });
+        });
     };
     /**
      * Get all keys and values from the store in order.
@@ -252,27 +266,19 @@ var SnapDB = /** @class */ (function () {
             onComplete("Database not ready!");
             return;
         }
-        var wasmFNs = { "string": wasm.read_index_str, "int": wasm.read_index_int, "float": wasm.read_index };
-        var wasmFNs2 = { "string": wasm.read_index_str_next, "int": wasm.read_index_int_next, "float": wasm.read_index_next };
-        var it = wasmFNs[this.keyType](this._indexNum, reverse ? 1 : 0);
-        var nextKey = 0;
-        var lastKey;
-        var isDone = false;
-        var count = 0;
-        while (!isDone) {
-            nextKey = wasmFNs2[this.keyType](this._indexNum, it, reverse ? 1 : 0, count);
-            if (nextKey === lastKey) {
-                isDone = true;
+        var msgId = exports.rand();
+        while (messageBuffer[msgId]) {
+            msgId = exports.rand();
+        }
+        messageBuffer[msgId] = function (data) {
+            if (data[0] === "response") {
+                onRecord(data[1], data[2]);
             }
             else {
-                if (this._cache[String(nextKey)] !== undefined) {
-                    onRecord(nextKey, this.get(nextKey));
-                }
-                lastKey = nextKey;
+                onComplete();
             }
-            count++;
-        }
-        onComplete();
+        };
+        this._worker.send({ type: "snap-get-all", id: msgId, reverse: reverse });
     };
     /**
      * Gets the keys and values between a given range, inclusive.
@@ -289,27 +295,19 @@ var SnapDB = /** @class */ (function () {
             onComplete("Database not ready!");
             return;
         }
-        var wasmFNs = { "string": wasm.read_index_range_str, "int": wasm.read_index_range_int, "float": wasm.read_index_range };
-        var wasmFNs2 = { "string": wasm.read_index_range_str_next, "int": wasm.read_index_range_int_next, "float": wasm.read_index_range_next };
-        var it = wasmFNs[this.keyType](this._indexNum, lower, higher, reverse ? 1 : 0);
-        var nextKey = 0;
-        var lastKey;
-        var isDone = false;
-        var count = 0;
-        while (!isDone) {
-            nextKey = wasmFNs2[this.keyType](this._indexNum, it, reverse ? 1 : 0, count);
-            if (nextKey === lastKey) {
-                isDone = true;
+        var msgId = exports.rand();
+        while (messageBuffer[msgId]) {
+            msgId = exports.rand();
+        }
+        messageBuffer[msgId] = function (data) {
+            if (data[0] === "response") {
+                onRecord(data[1], data[2]);
             }
             else {
-                if (this._cache[String(nextKey)] !== undefined) {
-                    onRecord(nextKey, this.get(nextKey));
-                }
-                lastKey = nextKey;
+                onComplete();
             }
-            count++;
-        }
-        onComplete();
+        };
+        this._worker.send({ type: "snap-get-range", id: msgId, lower: lower, higher: higher, reverse: reverse });
     };
     /**
      * Get a collection of values from the keys at the given offset/limit.
@@ -327,32 +325,83 @@ var SnapDB = /** @class */ (function () {
             onComplete("Database not ready!");
             return;
         }
-        var wasmFNs = { "string": wasm.read_index_offset_str, "int": wasm.read_index_offset_int, "float": wasm.read_index_offset };
-        var wasmFNs2 = { "string": wasm.read_index_offset_str_next, "int": wasm.read_index_offset_int_next, "float": wasm.read_index_offset_next };
-        var it = wasmFNs[this.keyType](this._indexNum, reverse ? 1 : 0, offset);
-        var nextKey = 0;
-        var lastKey;
-        var isDone = false;
-        var count = 0;
-        while (!isDone) {
-            nextKey = wasmFNs2[this.keyType](this._indexNum, it, reverse ? 1 : 0, limit, count);
-            if (nextKey === lastKey) {
-                isDone = true;
+        var msgId = exports.rand();
+        while (messageBuffer[msgId]) {
+            msgId = exports.rand();
+        }
+        messageBuffer[msgId] = function (data) {
+            if (data[0] === "response") {
+                onRecord(data[1], data[2]);
             }
             else {
-                if (this._cache[String(nextKey)] !== undefined) {
-                    onRecord(nextKey, this.get(nextKey));
-                }
-                lastKey = nextKey;
+                onComplete();
             }
-            count++;
-        }
-        onComplete();
+        };
+        this._worker.send({ type: "snap-get-offset", id: msgId, offset: offset, limit: limit, reverse: reverse });
+    };
+    /**
+     * Closes database
+     *
+     * @returns {Promise<any>}
+     * @memberof SnapDB
+     */
+    SnapDB.prototype.close = function () {
+        var _this = this;
+        return new Promise(function (res, rej) {
+            if (!_this._isReady) {
+                res();
+                return;
+            }
+            var msgId = exports.rand();
+            while (messageBuffer[msgId]) {
+                msgId = exports.rand();
+            }
+            messageBuffer[msgId] = function (data) {
+                _this._worker.kill();
+                _this._isReady = false;
+                if (data[0]) {
+                    rej(data[0]);
+                }
+                else {
+                    res();
+                }
+            };
+            _this._worker.send({ type: "snap-close", id: msgId });
+        });
+    };
+    /**
+     * Empty all keys and values from database.
+     *
+     * @returns {Promise<any>}
+     * @memberof SnapDB
+     */
+    SnapDB.prototype.empty = function () {
+        var _this = this;
+        return new Promise(function (res, rej) {
+            if (!_this._isReady) {
+                res();
+                return;
+            }
+            var msgId = exports.rand();
+            while (messageBuffer[msgId]) {
+                msgId = exports.rand();
+            }
+            messageBuffer[msgId] = function (data) {
+                if (data[0]) {
+                    rej(data[0]);
+                }
+                else {
+                    res();
+                }
+            };
+            _this._worker.send({ type: "snap-clear", id: msgId });
+        });
     };
     return SnapDB;
 }());
 exports.SnapDB = SnapDB;
 /*
+
 function makeid() {
     var text = "";
     var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -363,39 +412,41 @@ function makeid() {
     return text;
 }
 
-
-const db = new SnapDB<number>("my-db-test", "int");
+const db = new SnapDB<number>("my-db-test", "int", true);
 db.ready().then(() => {
+    console.log("READY");
 
-    let arr: any[] = [];
-    let count = 10000;
-    for (let i = 1; i <= count; i++) {
-        arr.push([i + 1, makeid(), makeid()]);
-    }
 
-    arr = arr.sort((a, b) => Math.random() > 0.5 ? 1 : -1);
-    const writeStart = Date.now();
-    let last: any;
-    db.begin_transaction();
-    arr.forEach(r => {
-        if (r[0] === 1029) {
-            last = r[0];
-            // console.log(r[2]);
+        let arr: any[] = [];
+        let count = 10000;
+        for (let i = 1; i <= count; i++) {
+            arr.push([i + 1, makeid(), makeid()]);
         }
-        db.put(r[0], r[2]);
-    })
-    db.end_transaction();
-    console.log((count / (Date.now() - writeStart) * 1000).toLocaleString(), "Records Per Second (WRITE)");
-    const start = Date.now();
-    console.time("READ");
-    db.getAll((key, data) => {
-        // console.log(key, data);
-    }, (err) => {
-        if (err) {
-            console.log(err);
-        }
-        console.log((db.getCount() / (Date.now() - start) * 1000).toLocaleString(), "Records Per Second (READ)");
-    }, false);
+    
+        arr = arr.sort((a, b) => Math.random() > 0.5 ? 1 : -1);
+        const writeStart = Date.now();
+        let last: any;
+        Promise.all(arr.map((r) => {
+            return db.put(r[0], r[2]);
+        })).then(() => {
+            console.log((count / (Date.now() - writeStart) * 1000).toLocaleString(), "Records Per Second (WRITE)");
+            const start = Date.now();
+            console.time("READ");
+            let ct = 0;
+            db.getAll((key, data) => {
+                ct++;
+                // console.log(key, data);
+            }, (err) => {
+                if (err) {
+                    console.log(err);
+                }
+                const time = (Date.now() - start);
+                db.getCount().then((ct) => {
+                    console.log(((ct / time) * 1000).toLocaleString(), "Records Per Second (READ)");
+                });
+            }, false);
+        })
+});
 
-});*/ 
+*/ 
 //# sourceMappingURL=index.js.map

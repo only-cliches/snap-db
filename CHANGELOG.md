@@ -1,5 +1,11 @@
-# TODO
-- Handle sqlite errors
+# [1.0.0]
+- Moved query code to worker thread.
+- All APIs are now ASYNC.
+- Added SQLite Error Handling.
+- Added transaction API.
+- Added empty and close API.
+- Only bugfixes planned from her on out.
+- Added typings to package.json
 
 # [0.0.4]
 - Switched to SQLite storage backend.

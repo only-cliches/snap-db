@@ -784,6 +784,7 @@ int database_put(int db, int isNew, std::string key, std::string value) {
     
     const char *keyStr = key.c_str();
     const char *valueStr = value.c_str();
+    int result;
 
     if (isNew) {
         sqlite3_clear_bindings(thisDB.put);
@@ -792,7 +793,7 @@ int database_put(int db, int isNew, std::string key, std::string value) {
         sqlite3_bind_text(thisDB.put, 1, keyStr, -1, SQLITE_STATIC);
         sqlite3_bind_text(thisDB.put, 2, valueStr, -1, SQLITE_STATIC);
 
-        sqlite3_step(thisDB.put);
+        result = sqlite3_step(thisDB.put);
     } else {
         sqlite3_clear_bindings(thisDB.update);
         sqlite3_reset(thisDB.update);
@@ -800,7 +801,12 @@ int database_put(int db, int isNew, std::string key, std::string value) {
         sqlite3_bind_text(thisDB.update, 1, valueStr, -1, SQLITE_STATIC);
         sqlite3_bind_text(thisDB.update, 2, keyStr, -1, SQLITE_STATIC);
         
-        sqlite3_step(thisDB.update);
+        result = sqlite3_step(thisDB.update);
+    }
+
+    if (result != SQLITE_DONE) {
+        printf("DB Error: %s\n", sqlite3_errmsg(thisDB.db));
+        return 1;
     }
 
 
@@ -824,11 +830,8 @@ std::string database_get(int db, std::string key) {
         std::string result = std::string(reinterpret_cast<const char*>(
             sqlite3_column_text(thisDB.get, 0)
         ));
-
-
         return result;
     } else {
-
         return "";
     }
 }
@@ -843,7 +846,12 @@ int database_del(int db, std::string key) {
 
     sqlite3_bind_text(thisDB.del, 1, keyStr, -1, SQLITE_STATIC);
 
-    sqlite3_step(thisDB.del);
+    int result = sqlite3_step(thisDB.del);
+
+    if (result != SQLITE_DONE) {
+        printf("DB Error: %s\n", sqlite3_errmsg(thisDB.db));
+        return 1;
+    }
 
     return 0;
 }
@@ -904,6 +912,25 @@ std::string database_cursor_next(int db, int cursor, int count) {
     }
 }
 
+int database_clear(int db) {
+    struct snapp_db thisDB = databases[db];
+    std::string delAll = "DELETE FROM 'values';";
+
+    const char *sqlStr = delAll.c_str();
+
+    sqlite3_stmt *ppStmt;
+
+    sqlite3_prepare_v2(thisDB.db, sqlStr, -1, &ppStmt, NULL);
+
+    int result = sqlite3_step(ppStmt);
+    sqlite3_finalize(ppStmt);
+    if (result != SQLITE_DONE) {
+        printf("DB Error: %s\n", sqlite3_errmsg(thisDB.db));
+        return 1;
+    }
+    return 0;
+}
+
 int database_start_tx(int db) {
     struct snapp_db thisDB = databases[db];
     sqlite3_exec(thisDB.db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
@@ -924,6 +951,7 @@ EMSCRIPTEN_BINDINGS(my_module)
     function("add_to_index", &add_to_index);
     function("del_key", &del_key);
     function("get_total", &get_total);
+    function("empty_index", &empty_index);
     function("read_index_range", &read_index_range);
     function("read_index_range_next", &read_index_range_next);
     function("read_index_offset", &read_index_offset);
@@ -935,6 +963,7 @@ EMSCRIPTEN_BINDINGS(my_module)
     function("add_to_index_str", &add_to_index_str);
     function("del_key_str", &del_key_str);
     function("get_total_str", &get_total_str);
+    function("empty_index_str", &empty_index_str);
     function("read_index_range_str", &read_index_range_str);
     function("read_index_range_str_next", &read_index_range_str_next);
     function("read_index_offset_str", &read_index_offset_str);
@@ -946,6 +975,7 @@ EMSCRIPTEN_BINDINGS(my_module)
     function("add_to_index_int", &add_to_index_int);
     function("del_key_int", &del_key_int);
     function("get_total_int", &get_total_int);
+    function("empty_index_int", &empty_index_int);
     function("read_index_range_int", &read_index_range_int);
     function("read_index_range_int_next", &read_index_range_int_next);
     function("read_index_offset_int", &read_index_offset_int);
@@ -962,4 +992,5 @@ EMSCRIPTEN_BINDINGS(my_module)
     function("database_cursor_next", &database_cursor_next);
     function("database_start_tx", &database_start_tx);
     function("database_end_tx", &database_end_tx);
+    function("database_clear", &database_clear);
 }

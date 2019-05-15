@@ -1,6 +1,6 @@
 import { expect, assert } from "chai";
 import "mocha";
-import { SnapDB } from "../src/index";
+import { SnapDB } from "./index";
 
 function makeid() {
     var text = "";
@@ -42,26 +42,28 @@ describe("SnapDB Tests", () => {
                 }
                 // scramble for insert
                 data[dataKey] = data[dataKey].sort((a, b) => Math.random() > 0.5 ? 1 : -1);
-                data[dataKey].map(k => s.put(k[0], k[1]));
-                return Promise.resolve();
+                return Promise.all(data[dataKey].map(k => s.put(k[0], k[1])))
             });
         })).then(() => {
-            try {
-                expect([
-                    db_str.getCount(),
-                    db_int.getCount(),
-                    db_flt.getCount(),
-                ]).to.deep.equal([
-                    999,
-                    999,
-                    999
-                ], "Put failed!");
-                done();
-            } catch (e) {
-                done(e);
-            }
+            Promise.all([
+                db_str.getCount(),
+                db_int.getCount(),
+                db_flt.getCount()
+            ]).then((result) => {
+                try {
+                    expect(result).to.deep.equal([
+                        999,
+                        999,
+                        999
+                    ], "Put failed!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            })
+
         });
-    }).timeout(15000);
+    }).timeout(5000);
 
     it("Integer: Sorted Keys", (done: MochaDone) => {
         data["int"] = data["int"].sort((a, b) => a[0] > b[0] ? 1 : -1);

@@ -3,20 +3,22 @@ Simple Javascript/Webassembly key-value store
 
 Get a running database in a snap!
 
-SnapDB is a persistent key-value store that provides ordered mapping from keys to string values.  You can optionally also save values into memory, significantly increasing read performance.
+SnapDB is a pure javascript persistent key-value store that provides ordered mapping from keys to string values.  You can optionally also save values into memory, significantly increasing read performance.
 
 ## Features
 
 - Zero dependencies.
 - Zero compiling.
 - Zero configuring.
+- ACID Compliant & Transaction support.
 - Constant time range & offset/limit queries.
 - Optimized with WebAssembly indexes.
 - Typescript & Babel friendly.
-- Works in NodeJS or NodeJS like environments.
+- Works in NodeJS and NodeJS like environments.
 - Keys are sorted, allowing *very fast* range queries.
 - Data is durable in the face of application or power failure.
 - Data is stored in SQLite database format.
+- Runs in it's own thread to prevent blocking.
 
 ## Installation
 
@@ -38,9 +40,12 @@ const db = new SnapDB(
 // wait for db to be ready
 db.ready().then(() => {
     // put a record
-    db.put(20, "hello");
+    return db.put(20, "hello");
+}).then(() => {
     // get a record
-    console.log(db.get(20)); // "hello"
+    return db.get(20);
+}).then((data) => {
+    console.log(data) // "hello"
 })
 ```
 
@@ -54,7 +59,7 @@ The `SnapDB` class accepts up to 3 arguments in the constructor.
 
 | Argument | Type                       | Details                                                                                                              |
 |----------|----------------------------|----------------------------------------------------------------------------------------------------------------------|
-| fileName | string                     | The file to persist data to.                                                     |
+| fileName | string                     | The file to persist data to or :memory: for in memory store only.                |
 | keyType  | "int" \| "string" \| "float" | The database can only use one type of key at a time.  You cannot change the key after the database has been created. |
 | useCache | bool                       | If enabled, data will be loaded to/from js memory in addition to being saved to disk, allowing MUCH faster reads.             |
 
@@ -73,14 +78,13 @@ The three `keyType`s correspond to different data types in WebAssembly.  Larger 
 #### .ready():Promise\<void\>
 Call on database initialization to know when the database is ready.
 
-
-#### .put(key: any, data: string): void
+#### .put(key: any, data: string): Promise\<void\>
 Puts data into the database at the provided key.
 
-#### .get(key: any):string
+#### .get(key: any):Promise\<string\>
 Used to get the value of a single key.
 
-#### .delete(key: any): void
+#### .delete(key: any): Promise\<void\>
 Deletes a key and it's value from the database.
 
 #### .getAllKeys(onKey: (key: any) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
@@ -89,14 +93,26 @@ Gets all the keys in the database, use the callback functions to capture the dat
 #### .getAll(onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
 Gets all the keys & values in the database, use the callback functions to capture the data. Can optionally return the keys in reverse order.
 
-#### .getCount(): number
-Gets the total number of records in the database.  This uses a *very fast* lookup method.
-
 #### .range(lower: any, higher: any, onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean)
 Gets a range of rows between the provided lower and upper values.  Can optionally return the results in reverse.  
 
 #### .offset(offset: number, limit: number, onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean)
 Gets a section of rows provided the offset and limit you'd like.  Can optionally return the results in reverse from the bottom of the key list.
+
+#### .getCount(): Promise\<number\>
+Gets the total number of records in the database.  This uses a *very fast* lookup method.
+
+#### .empty(): Promise\<void\>
+Clears all keys and values from the datastore.
+
+#### .close(): Promise\<void\>
+Closes the underlying datastore and clears the keys from memory.  This isn't reversible, you have to create a new `SnapDB` instance to get things going again.
+
+#### .begin_transaction(): Promise\<void\>
+Start a database transaction.
+
+#### .end_transaction(): Promise\<void\>
+End a database transaction, committing it to the database.
 
 # MIT License
 

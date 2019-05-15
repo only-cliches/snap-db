@@ -17,7 +17,9 @@
         "outDir":"bin",
     },
     "include": [
-        "src/index.ts"
+        "src/index.ts",
+        "src/child.ts",
+        "src/test.ts"
     ],
     "exclude": [
         "node_modules"

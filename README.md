@@ -3,6 +3,15 @@ Simple Javascript/Webassembly key-value store
 
 Get a running database in a snap!
 
+<p>
+  <a href="https://badge.fury.io/js/snap-db">
+    <img src="https://badge.fury.io/js/snap-db.svg">
+  </a>
+  <a href="https://www.npmjs.com/package/snap-db">
+    <img src="https://img.shields.io/npm/dm/snap-db.svg">
+  </a>
+</p>
+
 SnapDB is a pure javascript persistent key-value store that provides ordered mapping from keys to string values.  You can optionally also save values into memory, significantly increasing read performance.
 
 ## Features

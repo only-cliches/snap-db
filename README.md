@@ -62,8 +62,6 @@ db.ready().then(() => {
 
 The `SnapDB` class accepts up to 3 arguments in the constructor.
 
-> **IMPORTANT** SnapDB stores all your keys in WebAssembly memory for performance reasons.  This means there's a maximum storage capacity of just under 4GB *for all keys*.
-
 ### Class Arguments
 
 | Argument | Type                       | Details                                                                                                              |
@@ -71,6 +69,8 @@ The `SnapDB` class accepts up to 3 arguments in the constructor.
 | fileName | string                     | The file to persist data to or :memory: for in memory store only.                |
 | keyType  | "int" \| "string" \| "float" | The database can only use one type of key at a time.  You cannot change the key after the database has been created. |
 | useCache | bool                       | If enabled, data will be loaded to/from js memory in addition to being saved to disk, allowing MUCH faster reads.             |
+
+SnapDB stores all your keys in WebAssembly memory for performance reasons.  This means there's a maximum storage capacity of just under 4GB *for all keys*.
 
 The three `keyType`s correspond to different data types in WebAssembly.  Larger keys give you more flexibility but cost more space and thus further limit the maximum number of keys you can have.
 

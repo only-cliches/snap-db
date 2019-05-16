@@ -1,13 +1,16 @@
-# [1.0.0]
+# [1.0.1] 05-16-2019
+- Added changes to handle blank value keys like `""` and `0`.
+
+# [1.0.0] 05-15-2019
 - Moved query code to worker thread.
 - All APIs are now ASYNC.
 - Added SQLite Error Handling.
 - Added transaction API.
 - Added empty and close API.
-- Only bugfixes planned from her on out.
+- Only bugfixes planned from here on out.
 - Added typings to package.json
 
-# [0.0.4]
+# [0.0.4] 05-14-2019
 - Switched to SQLite storage backend.
 - Added tests.
 - WASM is now in one file.

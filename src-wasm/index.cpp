@@ -89,7 +89,7 @@ unsigned int get_total(int index)
 
 std::unordered_map<unsigned int, db_index_sorted::iterator> index_pointers;
 
-int read_index(int index, int reverse)
+std::string read_index(int index, int reverse)
 {
     int loc = random_int();
     while (index_pointers.count(loc) > 0)
@@ -98,7 +98,7 @@ int read_index(int index, int reverse)
     }
     db_index_sorted::iterator it = reverse == 1 ? index_list_sorted[index].end() : index_list_sorted[index].begin();
     index_pointers[loc] = it;
-    return loc;
+    return std::to_string(loc) + "," + std::to_string(index_list_sorted[index].size());
 }
 
 double read_index_next(int index, int ptr, int reverse, int count)
@@ -141,11 +141,18 @@ double read_index_next(int index, int ptr, int reverse, int count)
     }
 }
 
-int read_index_range(int index, double low, double high, int reverse)
+std::string read_index_range(int index, double low, double high, int reverse)
 {
 
     db_index_sorted::iterator lower = index_list_sorted[index].lower_bound(low);
     db_index_sorted::iterator upper = index_list_sorted[index].upper_bound(high);
+
+    int count = 0;
+    db_index_sorted::iterator lower2 = lower;
+    while(lower2 != upper) {
+        lower2++;
+        count++;
+    }
 
     int loc = random_int();
     while (index_pointers.count(loc) > 0 || index_pointers.count(loc + 1) > 0)
@@ -155,7 +162,7 @@ int read_index_range(int index, double low, double high, int reverse)
     index_pointers[loc] = lower;
     index_pointers[loc + 1] = upper;
 
-    return loc;
+    return std::to_string(loc) + "," + std::to_string(count);
 }
 
 double read_index_range_next(int index, int ptr, int reverse, int count)
@@ -308,7 +315,7 @@ unsigned int get_total_str(int index)
 
 std::unordered_map<unsigned int, db_index_sorted_str::iterator> index_str_pointers;
 
-int read_index_str(int index, int reverse)
+std::string read_index_str(int index, int reverse)
 {
     int loc = random_int();
     while (index_str_pointers.count(loc) > 0)
@@ -317,7 +324,7 @@ int read_index_str(int index, int reverse)
     }
     db_index_sorted_str::iterator it = reverse == 1 ? index_list_sorted_str[index].end() : index_list_sorted_str[index].begin();
     index_str_pointers[loc] = it;
-    return loc;
+    return std::to_string(loc) + "," + std::to_string(index_list_sorted_str[index].size());
 }
 
 std::string read_index_str_next(int index, int ptr, int reverse, int count)
@@ -359,11 +366,18 @@ std::string read_index_str_next(int index, int ptr, int reverse, int count)
     }
 }
 
-int read_index_range_str(int index, std::string low, std::string high, int reverse)
+std::string read_index_range_str(int index, std::string low, std::string high, int reverse)
 {
 
     db_index_sorted_str::iterator lower = index_list_sorted_str[index].lower_bound(low);
     db_index_sorted_str::iterator upper = index_list_sorted_str[index].upper_bound(high);
+
+    int count = 0;
+    db_index_sorted_str::iterator lower2 = lower;
+    while(lower2 != upper) {
+        lower2++;
+        count++;
+    }
 
     int loc = random_int();
     while (index_str_pointers.count(loc) > 0 || index_str_pointers.count(loc + 1) > 0)
@@ -373,7 +387,7 @@ int read_index_range_str(int index, std::string low, std::string high, int rever
     index_str_pointers[loc] = lower;
     index_str_pointers[loc + 1] = upper;
 
-    return loc;
+    return std::to_string(loc) + "," + std::to_string(count);
 }
 
 std::string read_index_range_str_next(int index, int ptr, int reverse, int count)
@@ -524,7 +538,7 @@ unsigned int get_total_int(int index)
 
 std::unordered_map<unsigned int, db_index_sorted_int::iterator> index_int_pointers;
 
-int read_index_int(int index, int reverse)
+std::string read_index_int(int index, int reverse)
 {
     int loc = random_int();
     while (index_int_pointers.count(loc) > 0)
@@ -533,7 +547,7 @@ int read_index_int(int index, int reverse)
     }
     db_index_sorted_int::iterator it = reverse == 1 ? index_list_sorted_int[index].end() : index_list_sorted_int[index].begin();
     index_int_pointers[loc] = it;
-    return loc;
+    return std::to_string(loc) + "," + std::to_string(index_list_sorted_int[index].size());
 }
 
 int read_index_int_next(int index, int ptr, int reverse, int count)
@@ -575,11 +589,18 @@ int read_index_int_next(int index, int ptr, int reverse, int count)
     }
 }
 
-int read_index_range_int(int index, unsigned int low, unsigned int high, int reverse)
+std::string read_index_range_int(int index, unsigned int low, unsigned int high, int reverse)
 {
 
     db_index_sorted_int::iterator lower = index_list_sorted_int[index].lower_bound(low);
     db_index_sorted_int::iterator upper = index_list_sorted_int[index].upper_bound(high);
+
+    int count = 0;
+    db_index_sorted_int::iterator lower2 = lower;
+    while(lower2 != upper) {
+        lower2++;
+        count++;
+    }
 
     int loc = random_int();
     while (index_int_pointers.count(loc) > 0 || index_int_pointers.count(loc + 1) > 0)
@@ -589,7 +610,7 @@ int read_index_range_int(int index, unsigned int low, unsigned int high, int rev
     index_int_pointers[loc] = lower;
     index_int_pointers[loc + 1] = upper;
 
-    return loc;
+    return std::to_string(loc) + "," + std::to_string(count);
 }
 
 unsigned int read_index_range_int_next(int index, int ptr, int reverse, int count)

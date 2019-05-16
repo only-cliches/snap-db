@@ -89,21 +89,16 @@ class SnapWorker {
                     const wasmFNs3 = { "string": wasm.read_index_str, "int": wasm.read_index_int, "float": wasm.read_index };
                     const wasmFNs4 = { "string": wasm.read_index_str_next, "int": wasm.read_index_int_next, "float": wasm.read_index_next };
 
-                    const it = wasmFNs3[this.keyType](this._indexNum, msg.reverse ? 1 : 0);
+                    const it = wasmFNs3[this.keyType](this._indexNum, msg.reverse ? 1 : 0).split(",").map(s => parseInt(s));
                     let nextKey: any = 0;
-                    let lastKey: any;
-                    let isDone = false;
                     let count = 0;
 
-                    while (!isDone) {
-                        nextKey = wasmFNs4[this.keyType](this._indexNum, it, msg.reverse ? 1 : 0, count);
-                        if (nextKey === lastKey) {
-                            isDone = true;
-                        } else {
-                            count++;
+                    while (count < it[1]) {
+                        nextKey = wasmFNs4[this.keyType](this._indexNum, it[0], msg.reverse ? 1 : 0, count);
+                        if (this._cache[String(nextKey)] !== undefined) {
                             if (process.send) process.send({ type: "snap-res", id: msg.id, data: ["response", nextKey] })
-                            lastKey = nextKey;
                         }
+                        count++;
                     }
                     if (process.send) process.send({ type: "snap-res-done", id: msg.id, data: [] })
 
@@ -124,25 +119,16 @@ class SnapWorker {
                     const getAllFNS = { "string": wasm.read_index_str, "int": wasm.read_index_int, "float": wasm.read_index };
                     const getALLFNS2 = { "string": wasm.read_index_str_next, "int": wasm.read_index_int_next, "float": wasm.read_index_next };
 
-                    const itALL = getAllFNS[this.keyType](this._indexNum, msg.reverse ? 1 : 0);
-                    let nextKeyALL: any = 0;
-                    let lastKeyAll: any;
-                    let isDoneALL = false;
+                    const itALL = getAllFNS[this.keyType](this._indexNum, msg.reverse ? 1 : 0).split(",").map(s => parseInt(s));
+                    let nextKeyALL: any;
                     let countALL = 0;
 
-                    while (!isDoneALL) {
-                        nextKeyALL = getALLFNS2[this.keyType](this._indexNum, itALL, msg.reverse ? 1 : 0, countALL);
-                        if (nextKeyALL === lastKeyAll) {
-                            isDoneALL = true;
+                    while (countALL < itALL[1]) {
+                        nextKeyALL = getALLFNS2[this.keyType](this._indexNum, itALL[0], msg.reverse ? 1 : 0, countALL);
+                        if (this._cache[String(nextKeyALL)].length) {
+                            if (process.send) process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyALL, this._cache[String(nextKeyALL)]] })
                         } else {
-                            if (this._cache[String(nextKeyALL)] !== undefined) {
-                                if (this._cache[String(nextKeyALL)].length) {
-                                    if (process.send) process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyALL, this._cache[String(nextKeyALL)]] })
-                                } else {
-                                    if (process.send) process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyALL, wasm.database_get(this._dbNum, String(nextKeyALL))] })
-                                }
-                            }
-                            lastKeyAll = nextKeyALL;
+                            if (process.send) process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyALL, wasm.database_get(this._dbNum, String(nextKeyALL))] })
                         }
                         countALL++;
                     }
@@ -154,23 +140,16 @@ class SnapWorker {
 
                     const offsetIT = offsetWasmFN[this.keyType](this._indexNum, msg.reverse ? 1 : 0, msg.offset);
                     let nextKeyOffset: any = 0;
-                    let lastKeyOffset: any;
-                    let isDoneOffset = false;
                     let countOffset = 0;
 
-                    while (!isDoneOffset) {
+                    while (countOffset < msg.limit) {
                         nextKeyOffset = offsetWasmFN2[this.keyType](this._indexNum, offsetIT, msg.reverse ? 1 : 0, msg.limit, countOffset);
-                        if (nextKeyOffset === lastKeyOffset) {
-                            isDoneOffset = true;
-                        } else {
-                            if (this._cache[String(nextKeyOffset)] !== undefined) {
-                                if (this._cache[String(nextKeyOffset)].length) {
-                                    if (process.send) process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyOffset, this._cache[String(nextKeyOffset)]] })
-                                } else {
-                                    if (process.send) process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyOffset, wasm.database_get(this._dbNum, String(nextKeyOffset))] })
-                                }
+                        if (this._cache[String(nextKeyOffset)] !== undefined) {
+                            if (this._cache[String(nextKeyOffset)].length) {
+                                if (process.send) process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyOffset, this._cache[String(nextKeyOffset)]] })
+                            } else {
+                                if (process.send) process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyOffset, wasm.database_get(this._dbNum, String(nextKeyOffset))] })
                             }
-                            lastKeyOffset = nextKeyOffset;
                         }
                         countOffset++;
                     }
@@ -180,26 +159,21 @@ class SnapWorker {
                     const wasmFNsRange = { "string": wasm.read_index_range_str, "int": wasm.read_index_range_int, "float": wasm.read_index_range };
                     const wasmFNsRange2 = { "string": wasm.read_index_range_str_next, "int": wasm.read_index_range_int_next, "float": wasm.read_index_range_next };
 
-                    const rangeIT = wasmFNsRange[this.keyType](this._indexNum, msg.lower, msg.higher, msg.reverse ? 1 : 0);
+                    const rangeIT = wasmFNsRange[this.keyType](this._indexNum, msg.lower, msg.higher, msg.reverse ? 1 : 0).split(",").map(s => parseInt(s));
 
-                    let nextKeyRange: any = 0;
-                    let lastKeyRange: any;
+                    let nextKeyRange: any;
                     let isDoneRange = false;
                     let countRange = 0;
 
-                    while (!isDoneRange) {
-                        nextKeyRange = wasmFNsRange2[this.keyType](this._indexNum, rangeIT, msg.reverse ? 1 : 0, countRange);
-                        if (nextKeyRange === lastKeyRange) {
-                            isDoneRange = true;
-                        } else {
-                            if (this._cache[String(nextKeyRange)] !== undefined) {
-                                if (this._cache[String(nextKeyRange)].length) {
-                                    if (process.send) process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyRange, this._cache[String(nextKeyRange)]] })
-                                } else {
-                                    if (process.send) process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyRange, wasm.database_get(this._dbNum, String(nextKeyRange))] })
-                                }
+                    while (countRange < rangeIT[1]) {
+                        nextKeyRange = wasmFNsRange2[this.keyType](this._indexNum, rangeIT[0], msg.reverse ? 1 : 0, countRange);
+
+                        if (this._cache[String(nextKeyRange)] !== undefined) {
+                            if (this._cache[String(nextKeyRange)].length) {
+                                if (process.send) process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyRange, this._cache[String(nextKeyRange)]] })
+                            } else {
+                                if (process.send) process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyRange, wasm.database_get(this._dbNum, String(nextKeyRange))] })
                             }
-                            lastKeyRange = nextKeyRange;
                         }
                         countRange++;
                     }
@@ -253,23 +227,14 @@ class SnapWorker {
         }
         const getAllFNS = { "string": wasm.read_index_str, "int": wasm.read_index_int, "float": wasm.read_index };
         const getALLFNS2 = { "string": wasm.read_index_str_next, "int": wasm.read_index_int_next, "float": wasm.read_index_next };
-
-        const itALL = getAllFNS[this.keyType](this._indexNum, 0);
+        
+        const itALL = getAllFNS[this.keyType](this._indexNum, 0).split(",").map(s => parseInt(s));
         let nextKeyALL: any = 0;
-        let lastKeyAll: any;
-        let isDoneALL = false;
         let countALL = 0;
 
-        while (!isDoneALL) {
-            nextKeyALL = getALLFNS2[this.keyType](this._indexNum, itALL, 0, countALL);
-            if (nextKeyALL === lastKeyAll) {
-                isDoneALL = true;
-            } else {
-                if (nextKeyALL) {
-                    this._cache[String(nextKeyALL)] = wasm.database_get(this._dbNum, String(nextKeyALL));
-                    lastKeyAll = nextKeyALL;
-                }
-            }
+        while (countALL < itALL[1]) {
+            nextKeyALL = getALLFNS2[this.keyType](this._indexNum, itALL[0], 0, countALL);
+            this._cache[String(nextKeyALL)] = wasm.database_get(this._dbNum, String(nextKeyALL));
             countALL++;
         }
         complete();

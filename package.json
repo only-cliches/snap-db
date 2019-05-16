@@ -1,11 +1,11 @@
 {
   "name": "snap-db",
-  "version": "1.0.0",
-  "description": "Simple & Blazing Fast Javascript/Webassembly key-value store",
+  "version": "1.0.1",
+  "description": "Simple & Fast Javascript/Webassembly key-value store",
   "main": "bin/index.js",
   "typings": "bin/index.d.ts",
   "scripts": {
-    "build-wasm": "cd src-wasm && ./build.sh --prod && cp ../src/db.js ../bin/db.js && cp ../src/db.wasm ../bin/db.wasm",
+    "build-wasm": "cd src-wasm && ./build.sh --prod && cp ../src/db.js ../bin/db.js",
     "build": "tsc",
     "test": "tsc && rm -rf testDB* && mocha bin/test.js && rm -rf testDB*"
   },

@@ -27,7 +27,7 @@ describe("SnapDB Tests", () => {
             return s.ready().then(() => {
                 const dataKey = ["str", "int", "flt"][i];
                 data[dataKey] = [];
-                for(let k = 1; k < 1000; k++) {
+                for(let k = 0; k < 1000; k++) {
                     switch(i) {
                         case 0:
                             data[dataKey].push([makeid(), makeid()]);
@@ -39,7 +39,7 @@ describe("SnapDB Tests", () => {
                             data[dataKey].push([k + (Math.round(Math.random() * 8)/10), makeid()]);
                         break;
                     }
-                }
+                }``
                 // scramble for insert
                 data[dataKey] = data[dataKey].sort((a, b) => Math.random() > 0.5 ? 1 : -1);
                 return Promise.all(data[dataKey].map(k => s.put(k[0], k[1])))
@@ -52,9 +52,9 @@ describe("SnapDB Tests", () => {
             ]).then((result) => {
                 try {
                     expect(result).to.deep.equal([
-                        999,
-                        999,
-                        999
+                        1000,
+                        1000,
+                        1000
                     ], "Put failed!");
                     done();
                 } catch (e) {
@@ -119,7 +119,6 @@ describe("SnapDB Tests", () => {
             dataFromDB.push([key, value]);
         }, () => {
             try {
-                const len = db_int.getCount();
                 const genData = data["int"].slice().reverse().slice(99, 109);
                 expect(dataFromDB).to.deep.equal(genData, "Integer offset reverse select failed!");
                 done();

@@ -19,7 +19,7 @@ describe("SnapDB Tests", function () {
             return s.ready().then(function () {
                 var dataKey = ["str", "int", "flt"][i];
                 data[dataKey] = [];
-                for (var k = 1; k < 1000; k++) {
+                for (var k = 0; k < 1000; k++) {
                     switch (i) {
                         case 0:
                             data[dataKey].push([makeid(), makeid()]);
@@ -32,6 +32,7 @@ describe("SnapDB Tests", function () {
                             break;
                     }
                 }
+                "";
                 // scramble for insert
                 data[dataKey] = data[dataKey].sort(function (a, b) { return Math.random() > 0.5 ? 1 : -1; });
                 return Promise.all(data[dataKey].map(function (k) { return s.put(k[0], k[1]); }));
@@ -44,9 +45,9 @@ describe("SnapDB Tests", function () {
             ]).then(function (result) {
                 try {
                     chai_1.expect(result).to.deep.equal([
-                        999,
-                        999,
-                        999
+                        1000,
+                        1000,
+                        1000
                     ], "Put failed!");
                     done();
                 }
@@ -108,7 +109,6 @@ describe("SnapDB Tests", function () {
             dataFromDB.push([key, value]);
         }, function () {
             try {
-                var len = db_int.getCount();
                 var genData = data["int"].slice().reverse().slice(99, 109);
                 chai_1.expect(dataFromDB).to.deep.equal(genData, "Integer offset reverse select failed!");
                 done();

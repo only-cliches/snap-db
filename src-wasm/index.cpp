@@ -97,6 +97,7 @@ std::string read_index(int index, int reverse)
         loc = random_int();
     }
     db_index_sorted::iterator it = reverse == 1 ? index_list_sorted[index].end() : index_list_sorted[index].begin();
+
     index_pointers[loc] = it;
     return std::to_string(loc) + "," + std::to_string(index_list_sorted[index].size());
 }
@@ -109,18 +110,17 @@ double read_index_next(int index, int ptr, int reverse, int count)
     
     if (reverse == 1)
     {
-        if (count > 0)
-        {
-            index_pointers[ptr]--;
-        }
+        index_pointers[ptr]--;
+
         if (index_pointers[ptr] != index_list_sorted[index].begin())
         {
             return index_pointers[ptr]->first;
         }
         else
         {
+            double lastElem = index_pointers[ptr]->first;
             index_pointers.erase(ptr);
-            return 0;
+            return lastElem;
         }
     }
     else
@@ -323,6 +323,7 @@ std::string read_index_str(int index, int reverse)
         loc = random_int();
     }
     db_index_sorted_str::iterator it = reverse == 1 ? index_list_sorted_str[index].end() : index_list_sorted_str[index].begin();
+
     index_str_pointers[loc] = it;
     return std::to_string(loc) + "," + std::to_string(index_list_sorted_str[index].size());
 }
@@ -334,18 +335,16 @@ std::string read_index_str_next(int index, int ptr, int reverse, int count)
 
     if (reverse == 1)
     {
-        if (count > 0)
-        {
-            index_str_pointers[ptr]--;
-        }
+        index_str_pointers[ptr]--;
         if (index_str_pointers[ptr] != index_list_sorted_str[index].begin())
         {
             return index_str_pointers[ptr]->first;
         }
         else
         {
+            std::string lastElement = index_str_pointers[ptr]->first;
             index_str_pointers.erase(ptr);
-            return "";
+            return lastElement;
         }
     }
     else
@@ -546,6 +545,7 @@ std::string read_index_int(int index, int reverse)
         loc = random_int();
     }
     db_index_sorted_int::iterator it = reverse == 1 ? index_list_sorted_int[index].end() : index_list_sorted_int[index].begin();
+
     index_int_pointers[loc] = it;
     return std::to_string(loc) + "," + std::to_string(index_list_sorted_int[index].size());
 }
@@ -557,18 +557,16 @@ int read_index_int_next(int index, int ptr, int reverse, int count)
 
     if (reverse == 1)
     {
-        if (count > 0)
-        {
-            index_int_pointers[ptr]--;
-        }
+        index_int_pointers[ptr]--;
         if (index_int_pointers[ptr] != index_list_sorted_int[index].begin())
         {
             return index_int_pointers[ptr]->first;
         }
         else
         {
+            int lastElem = index_int_pointers[ptr]->first;
             index_int_pointers.erase(ptr);
-            return 0;
+            return lastElem;
         }
     }
     else

@@ -30,13 +30,13 @@ var SnapWorker = /** @class */ (function () {
             var msgId = msg.id;
             switch (msg.type) {
                 case "snap-get":
-                    if (_this._cache[String(key)] !== undefined && _this._cache[String(key)].length) {
-                        if (process.send) {
+                    if (_this._cache[String(key)] && _this._cache[String(key)].length) {
+                        if (process.send)
                             process.send({ type: "snap-res-done", id: msgId, data: [undefined, _this._cache[String(key)]] });
-                        }
                     }
-                    if (process.send) {
-                        process.send({ type: "snap-res-done", id: msgId, data: [undefined, wasm.database_get(_this._dbNum, String(key))] });
+                    else {
+                        if (process.send)
+                            process.send({ type: "snap-res-done", id: msgId, data: [undefined, wasm.database_get(_this._dbNum, String(key))] });
                     }
                     break;
                 case "snap-del":
@@ -111,7 +111,7 @@ var SnapWorker = /** @class */ (function () {
                     var countALL = 0;
                     while (countALL < itALL[1]) {
                         nextKeyALL = getALLFNS2[_this.keyType](_this._indexNum, itALL[0], msg.reverse ? 1 : 0, countALL);
-                        if (_this._cache[String(nextKeyALL)].length) {
+                        if (_this._cache[String(nextKeyALL)] && _this._cache[String(nextKeyALL)].length) {
                             if (process.send)
                                 process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyALL, _this._cache[String(nextKeyALL)]] });
                         }
@@ -132,15 +132,13 @@ var SnapWorker = /** @class */ (function () {
                     var countOffset = 0;
                     while (countOffset < msg.limit) {
                         nextKeyOffset = offsetWasmFN2[_this.keyType](_this._indexNum, offsetIT, msg.reverse ? 1 : 0, msg.limit, countOffset);
-                        if (_this._cache[String(nextKeyOffset)] !== undefined) {
-                            if (_this._cache[String(nextKeyOffset)].length) {
-                                if (process.send)
-                                    process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyOffset, _this._cache[String(nextKeyOffset)]] });
-                            }
-                            else {
-                                if (process.send)
-                                    process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyOffset, wasm.database_get(_this._dbNum, String(nextKeyOffset))] });
-                            }
+                        if (_this._cache[String(nextKeyOffset)] && _this._cache[String(nextKeyOffset)].length) {
+                            if (process.send)
+                                process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyOffset, _this._cache[String(nextKeyOffset)]] });
+                        }
+                        else {
+                            if (process.send)
+                                process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyOffset, wasm.database_get(_this._dbNum, String(nextKeyOffset))] });
                         }
                         countOffset++;
                     }
@@ -156,15 +154,13 @@ var SnapWorker = /** @class */ (function () {
                     var countRange = 0;
                     while (countRange < rangeIT[1]) {
                         nextKeyRange = wasmFNsRange2[_this.keyType](_this._indexNum, rangeIT[0], msg.reverse ? 1 : 0, countRange);
-                        if (_this._cache[String(nextKeyRange)] !== undefined) {
-                            if (_this._cache[String(nextKeyRange)].length) {
-                                if (process.send)
-                                    process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyRange, _this._cache[String(nextKeyRange)]] });
-                            }
-                            else {
-                                if (process.send)
-                                    process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyRange, wasm.database_get(_this._dbNum, String(nextKeyRange))] });
-                            }
+                        if (_this._cache[String(nextKeyRange)] && _this._cache[String(nextKeyRange)].length) {
+                            if (process.send)
+                                process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyRange, _this._cache[String(nextKeyRange)]] });
+                        }
+                        else {
+                            if (process.send)
+                                process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyRange, wasm.database_get(_this._dbNum, String(nextKeyRange))] });
                         }
                         countRange++;
                     }
@@ -221,7 +217,7 @@ var SnapWorker = /** @class */ (function () {
         var countALL = 0;
         while (countALL < itALL[1]) {
             nextKeyALL = getALLFNS2[this.keyType](this._indexNum, itALL[0], 0, countALL);
-            this._cache[String(nextKeyALL)] = wasm.database_get(this._dbNum, String(nextKeyALL));
+            this._cache[String(nextKeyALL)] = wasm.database_get(this._dbNum, String(nextKeyALL)) || "";
             countALL++;
         }
         complete();

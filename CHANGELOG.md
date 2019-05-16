@@ -1,3 +1,7 @@
+# [1.0.2] 05-16-2019
+- Fixed offset/limit bug.
+- Fixed possibly undefined object bug.
+
 # [1.0.1] 05-16-2019
 - Added changes to handle blank value keys like `""` and `0`.
 

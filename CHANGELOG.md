@@ -1,3 +1,6 @@
+# [1.0.3] 05-21-2019
+- Fixed issue with zero length indexes.
+
 # [1.0.2] 05-16-2019
 - Fixed offset/limit bug.
 - Fixed possibly undefined object bug.

@@ -6,6 +6,7 @@ declare class SnapWorker {
     private _cache;
     _indexNum: number;
     _dbNum: number;
+    private _mod;
     constructor(_path: string, keyType: string, memoryCache: boolean);
     private _getReady;
     /**

@@ -6,19 +6,20 @@ var SnapWorker = /** @class */ (function () {
         this.keyType = keyType;
         this.memoryCache = memoryCache;
         this._cache = {};
-        var checkReady = function () {
-            if (wasm.loaded) {
+        this._mod = wasm;
+        var checkLoaded = function () {
+            if (_this._mod.loaded) {
                 _this._getReady();
             }
             else {
-                setTimeout(checkReady, 100);
+                setTimeout(checkLoaded, 10);
             }
         };
-        checkReady();
+        checkLoaded();
     }
     SnapWorker.prototype._getReady = function () {
         var _this = this;
-        var dbData = wasm.database_create(this._path, { "float": 0, "string": 1, "int": 2 }[this.keyType]);
+        var dbData = this._mod.database_create(this._path, { "float": 0, "string": 1, "int": 2 }[this.keyType]);
         if (!dbData) {
             throw new Error("Unable to connect to database at " + this._path);
         }
@@ -36,15 +37,15 @@ var SnapWorker = /** @class */ (function () {
                     }
                     else {
                         if (process.send)
-                            process.send({ type: "snap-res-done", id: msgId, data: [undefined, wasm.database_get(_this._dbNum, String(key))] });
+                            process.send({ type: "snap-res-done", id: msgId, data: [undefined, _this._mod.database_get(_this._dbNum, String(key))] });
                     }
                     break;
                 case "snap-del":
                     // delete key from memory
-                    var wasmFNs2 = { "string": wasm.del_key_str, "int": wasm.del_key_int, "float": wasm.del_key };
+                    var wasmFNs2 = { "string": _this._mod.del_key_str, "int": _this._mod.del_key_int, "float": _this._mod.del_key };
                     wasmFNs2[_this.keyType](_this._indexNum, key);
                     // delete key from database
-                    var result2 = wasm.database_del(_this._dbNum, String(key));
+                    var result2 = _this._mod.database_del(_this._dbNum, String(key));
                     delete _this._cache[String(key)];
                     if (result2 === 1) {
                         if (process.send)
@@ -57,10 +58,10 @@ var SnapWorker = /** @class */ (function () {
                     break;
                 case "snap-put":
                     // write key to memory
-                    var wasmFNs = { "string": wasm.add_to_index_str, "int": wasm.add_to_index_int, "float": wasm.add_to_index };
+                    var wasmFNs = { "string": _this._mod.add_to_index_str, "int": _this._mod.add_to_index_int, "float": _this._mod.add_to_index };
                     wasmFNs[_this.keyType](_this._indexNum, key);
                     // write data to database
-                    var result = wasm.database_put(_this._dbNum, _this._cache[String(key)] === undefined ? 1 : 0, String(key), msg.value);
+                    var result = _this._mod.database_put(_this._dbNum, _this._cache[String(key)] === undefined ? 1 : 0, String(key), msg.value);
                     _this._cache[String(key)] = _this.memoryCache ? msg.value : "";
                     if (process.send) {
                         if (result === 0) {
@@ -72,9 +73,14 @@ var SnapWorker = /** @class */ (function () {
                     }
                     break;
                 case "snap-get-all-keys":
-                    var wasmFNs3 = { "string": wasm.read_index_str, "int": wasm.read_index_int, "float": wasm.read_index };
-                    var wasmFNs4 = { "string": wasm.read_index_str_next, "int": wasm.read_index_int_next, "float": wasm.read_index_next };
+                    var wasmFNs3 = { "string": _this._mod.read_index_str, "int": _this._mod.read_index_int, "float": _this._mod.read_index };
+                    var wasmFNs4 = { "string": _this._mod.read_index_str_next, "int": _this._mod.read_index_int_next, "float": _this._mod.read_index_next };
                     var it_1 = wasmFNs3[_this.keyType](_this._indexNum, msg.reverse ? 1 : 0).split(",").map(function (s) { return parseInt(s); });
+                    if (!it_1) {
+                        if (process.send)
+                            process.send({ type: "snap-res-done", id: msg.id, data: [] });
+                        return;
+                    }
                     var nextKey = 0;
                     var count = 0;
                     while (count < it_1[1]) {
@@ -89,24 +95,30 @@ var SnapWorker = /** @class */ (function () {
                         process.send({ type: "snap-res-done", id: msg.id, data: [] });
                     break;
                 case "snap-count":
-                    var wasmCountFns = { "string": wasm.get_total_str, "int": wasm.get_total_int, "float": wasm.get_total };
+                    var wasmCountFns = { "string": _this._mod.get_total_str, "int": _this._mod.get_total_int, "float": _this._mod.get_total };
                     if (process.send)
                         process.send({ type: "snap-res-done", id: msg.id, data: [undefined, wasmCountFns[_this.keyType](_this._indexNum)] });
                     break;
                 case "snap-start-tx":
-                    wasm.database_start_tx(_this._indexNum);
+                    _this._mod.database_start_tx(_this._indexNum);
                     if (process.send)
                         process.send({ type: "snap-res-done", id: msg.id, data: [] });
                     break;
                 case "snap-end-tx":
-                    wasm.database_end_tx(_this._indexNum);
+                    _this._mod.database_end_tx(_this._indexNum);
                     if (process.send)
                         process.send({ type: "snap-res-done", id: msg.id, data: [] });
                     break;
                 case "snap-get-all":
-                    var getAllFNS = { "string": wasm.read_index_str, "int": wasm.read_index_int, "float": wasm.read_index };
-                    var getALLFNS2 = { "string": wasm.read_index_str_next, "int": wasm.read_index_int_next, "float": wasm.read_index_next };
-                    var itALL = getAllFNS[_this.keyType](_this._indexNum, msg.reverse ? 1 : 0).split(",").map(function (s) { return parseInt(s); });
+                    var getAllFNS = { "string": _this._mod.read_index_str, "int": _this._mod.read_index_int, "float": _this._mod.read_index };
+                    var getALLFNS2 = { "string": _this._mod.read_index_str_next, "int": _this._mod.read_index_int_next, "float": _this._mod.read_index_next };
+                    var itALL = getAllFNS[_this.keyType](_this._indexNum, msg.reverse ? 1 : 0);
+                    if (!itALL) {
+                        if (process.send)
+                            process.send({ type: "snap-res-done", id: msg.id, data: [] });
+                        return;
+                    }
+                    itALL = itALL.split(",").map(function (s) { return parseInt(s); });
                     var nextKeyALL = void 0;
                     var countALL = 0;
                     while (countALL < itALL[1]) {
@@ -117,7 +129,7 @@ var SnapWorker = /** @class */ (function () {
                         }
                         else {
                             if (process.send)
-                                process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyALL, wasm.database_get(_this._dbNum, String(nextKeyALL))] });
+                                process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyALL, _this._mod.database_get(_this._dbNum, String(nextKeyALL))] });
                         }
                         countALL++;
                     }
@@ -125,9 +137,14 @@ var SnapWorker = /** @class */ (function () {
                         process.send({ type: "snap-res-done", id: msg.id, data: [] });
                     break;
                 case "snap-get-offset":
-                    var offsetWasmFN = { "string": wasm.read_index_offset_str, "int": wasm.read_index_offset_int, "float": wasm.read_index_offset };
-                    var offsetWasmFN2 = { "string": wasm.read_index_offset_str_next, "int": wasm.read_index_offset_int_next, "float": wasm.read_index_offset_next };
+                    var offsetWasmFN = { "string": _this._mod.read_index_offset_str, "int": _this._mod.read_index_offset_int, "float": _this._mod.read_index_offset };
+                    var offsetWasmFN2 = { "string": _this._mod.read_index_offset_str_next, "int": _this._mod.read_index_offset_int_next, "float": _this._mod.read_index_offset_next };
                     var offsetIT = offsetWasmFN[_this.keyType](_this._indexNum, msg.reverse ? 1 : 0, msg.offset);
+                    if (offsetIT === 0) {
+                        if (process.send)
+                            process.send({ type: "snap-res-done", id: msg.id, data: [] });
+                        return;
+                    }
                     var nextKeyOffset = 0;
                     var countOffset = 0;
                     while (countOffset < msg.limit) {
@@ -138,7 +155,7 @@ var SnapWorker = /** @class */ (function () {
                         }
                         else {
                             if (process.send)
-                                process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyOffset, wasm.database_get(_this._dbNum, String(nextKeyOffset))] });
+                                process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyOffset, _this._mod.database_get(_this._dbNum, String(nextKeyOffset))] });
                         }
                         countOffset++;
                     }
@@ -146,9 +163,15 @@ var SnapWorker = /** @class */ (function () {
                         process.send({ type: "snap-res-done", id: msg.id, data: [] });
                     break;
                 case "snap-get-range":
-                    var wasmFNsRange = { "string": wasm.read_index_range_str, "int": wasm.read_index_range_int, "float": wasm.read_index_range };
-                    var wasmFNsRange2 = { "string": wasm.read_index_range_str_next, "int": wasm.read_index_range_int_next, "float": wasm.read_index_range_next };
-                    var rangeIT = wasmFNsRange[_this.keyType](_this._indexNum, msg.lower, msg.higher, msg.reverse ? 1 : 0).split(",").map(function (s) { return parseInt(s); });
+                    var wasmFNsRange = { "string": _this._mod.read_index_range_str, "int": _this._mod.read_index_range_int, "float": _this._mod.read_index_range };
+                    var wasmFNsRange2 = { "string": _this._mod.read_index_range_str_next, "int": _this._mod.read_index_range_int_next, "float": _this._mod.read_index_range_next };
+                    var rangeIT = wasmFNsRange[_this.keyType](_this._indexNum, msg.lower, msg.higher, msg.reverse ? 1 : 0);
+                    if (!rangeIT) {
+                        if (process.send)
+                            process.send({ type: "snap-res-done", id: msg.id, data: [] });
+                        return;
+                    }
+                    rangeIT = rangeIT.split(",").map(function (s) { return parseInt(s); });
                     var nextKeyRange = void 0;
                     var isDoneRange = false;
                     var countRange = 0;
@@ -160,7 +183,7 @@ var SnapWorker = /** @class */ (function () {
                         }
                         else {
                             if (process.send)
-                                process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyRange, wasm.database_get(_this._dbNum, String(nextKeyRange))] });
+                                process.send({ type: "snap-res", id: msg.id, data: ["response", nextKeyRange, _this._mod.database_get(_this._dbNum, String(nextKeyRange))] });
                         }
                         countRange++;
                     }
@@ -168,20 +191,20 @@ var SnapWorker = /** @class */ (function () {
                         process.send({ type: "snap-res-done", id: msg.id, data: [] });
                     break;
                 case "snap-close":
-                    var wasmDelFns = { "string": wasm.empty_index_str, "int": wasm.empty_index_int, "float": wasm.empty_index };
+                    var wasmDelFns = { "string": _this._mod.empty_index_str, "int": _this._mod.empty_index_int, "float": _this._mod.empty_index };
                     // clear index
                     wasmDelFns[_this.keyType](_this._indexNum);
                     // close database
-                    wasm.database_close(_this._dbNum);
+                    _this._mod.database_close(_this._dbNum);
                     if (process.send)
                         process.send({ type: "snap-res-done", id: msg.id, data: [] });
                     break;
                 case "snap-clear":
-                    var wasmClearFns = { "string": wasm.empty_index_str, "int": wasm.empty_index_int, "float": wasm.empty_index };
+                    var wasmClearFns = { "string": _this._mod.empty_index_str, "int": _this._mod.empty_index_int, "float": _this._mod.empty_index };
                     // clear index
                     wasmClearFns[_this.keyType](_this._indexNum);
                     // clear database
-                    var resultClear = wasm.database_clear(_this._dbNum);
+                    var resultClear = _this._mod.database_clear(_this._dbNum);
                     if (resultClear === 0) {
                         if (process.send)
                             process.send({ type: "snap-res-done", id: msg.id, data: [] });
@@ -204,20 +227,20 @@ var SnapWorker = /** @class */ (function () {
      * @memberof SnapDB
      */
     SnapWorker.prototype._loadCache = function (complete, onErr) {
-        var wasmFNs = { "string": wasm.get_total_str, "int": wasm.get_total_int, "float": wasm.get_total };
+        var wasmFNs = { "string": this._mod.get_total_str, "int": this._mod.get_total_int, "float": this._mod.get_total };
         var total = wasmFNs[this.keyType](this._indexNum);
         if (total === 0 || !this.memoryCache) {
             complete();
             return;
         }
-        var getAllFNS = { "string": wasm.read_index_str, "int": wasm.read_index_int, "float": wasm.read_index };
-        var getALLFNS2 = { "string": wasm.read_index_str_next, "int": wasm.read_index_int_next, "float": wasm.read_index_next };
+        var getAllFNS = { "string": this._mod.read_index_str, "int": this._mod.read_index_int, "float": this._mod.read_index };
+        var getALLFNS2 = { "string": this._mod.read_index_str_next, "int": this._mod.read_index_int_next, "float": this._mod.read_index_next };
         var itALL = getAllFNS[this.keyType](this._indexNum, 0).split(",").map(function (s) { return parseInt(s); });
         var nextKeyALL = 0;
         var countALL = 0;
         while (countALL < itALL[1]) {
             nextKeyALL = getALLFNS2[this.keyType](this._indexNum, itALL[0], 0, countALL);
-            this._cache[String(nextKeyALL)] = wasm.database_get(this._dbNum, String(nextKeyALL)) || "";
+            this._cache[String(nextKeyALL)] = this._mod.database_get(this._dbNum, String(nextKeyALL)) || "";
             countALL++;
         }
         complete();
@@ -229,45 +252,24 @@ var SnapWorker = /** @class */ (function () {
      * @memberof SnapDB
      */
     SnapWorker.prototype._loadKeys = function () {
-        var ptr = wasm.database_cursor(this._dbNum);
-        var nextKey = 0;
-        var lastKey;
-        var isDone = false;
+        var ptr = this._mod.database_cursor(this._dbNum).split(",").map(function (s) { return parseInt(s); });
+        var nextKey;
         var count = 0;
-        while (!isDone) {
-            nextKey = wasm.database_cursor_next(this._dbNum, ptr, count);
-            if (count === 0 && !nextKey) {
-                isDone = true;
-            }
-            else {
-                if (nextKey === lastKey) {
-                    isDone = true;
-                }
-                else {
-                    var dataKey = this.keyType === "string" ? nextKey : parseFloat(nextKey);
-                    // write key to memory
-                    var wasmFNs = { "string": wasm.add_to_index_str, "int": wasm.add_to_index_int, "float": wasm.add_to_index };
-                    if (nextKey !== "") {
-                        this._cache[String(nextKey)] = "";
-                        wasmFNs[this.keyType](this._indexNum, dataKey);
-                    }
-                    lastKey = nextKey;
-                }
-                count++;
-            }
+        while (count < ptr[1]) {
+            nextKey = this._mod.database_cursor_next(this._dbNum, ptr[0], count);
+            var dataKey = this.keyType === "string" ? nextKey : parseFloat(nextKey || "0");
+            // write key to memory
+            var wasmFNs = { "string": this._mod.add_to_index_str, "int": this._mod.add_to_index_int, "float": this._mod.add_to_index };
+            this._cache[String(nextKey)] = "";
+            wasmFNs[this.keyType](this._indexNum, dataKey);
+            count++;
         }
-        if (this.memoryCache) {
-            this._loadCache(function () {
-                if (process.send)
-                    process.send({ type: "snap-ready" });
-            }, function (err) {
-                throw new Error(err);
-            });
-        }
-        else {
+        this._loadCache(function () {
             if (process.send)
                 process.send({ type: "snap-ready" });
-        }
+        }, function (err) {
+            throw new Error(err);
+        });
     };
     return SnapWorker;
 }());

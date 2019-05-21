@@ -1,6 +1,6 @@
 {
   "name": "snap-db",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Simple & Fast Javascript/Webassembly key-value store",
   "main": "bin/index.js",
   "typings": "bin/index.d.ts",

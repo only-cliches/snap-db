@@ -23,20 +23,19 @@ typedef std::map<std::string, char *> db_index_sorted_str;
 
 typedef std::map<unsigned int, char *> db_index_sorted_int;
 
-
-struct snapp_db {
-    sqlite3 * db;
-    sqlite3_stmt * put;
-    sqlite3_stmt * del;
-    sqlite3_stmt * get;
-    sqlite3_stmt * update;
+struct snapp_db
+{
+    sqlite3 *db;
+    sqlite3_stmt *put;
+    sqlite3_stmt *del;
+    sqlite3_stmt *get;
+    sqlite3_stmt *update;
     int keyType;
     int index;
 };
 
 std::unordered_map<int, snapp_db> databases;
 std::unordered_map<int, sqlite3_stmt *> database_cursors;
-
 
 // global object containing list of indexes
 std::vector<db_index_sorted> index_list_sorted;
@@ -85,12 +84,13 @@ int del_key(int index, double key)
 unsigned int get_total(int index)
 {
     return index_list_sorted[index].size();
-} 
+}
 
 std::unordered_map<unsigned int, db_index_sorted::iterator> index_pointers;
 
 std::string read_index(int index, int reverse)
 {
+    if (index_list_sorted[index].size() == 0) return "";
     int loc = random_int();
     while (index_pointers.count(loc) > 0)
     {
@@ -107,7 +107,7 @@ double read_index_next(int index, int ptr, int reverse, int count)
 
     if (index_pointers.count(ptr) == 0)
         return 0;
-    
+
     if (reverse == 1)
     {
         index_pointers[ptr]--;
@@ -143,13 +143,14 @@ double read_index_next(int index, int ptr, int reverse, int count)
 
 std::string read_index_range(int index, double low, double high, int reverse)
 {
-
+    if (index_list_sorted[index].size() == 0) return "";
     db_index_sorted::iterator lower = index_list_sorted[index].lower_bound(low);
     db_index_sorted::iterator upper = index_list_sorted[index].upper_bound(high);
 
     int count = 0;
     db_index_sorted::iterator lower2 = lower;
-    while(lower2 != upper) {
+    while (lower2 != upper)
+    {
         lower2++;
         count++;
     }
@@ -175,7 +176,7 @@ double read_index_range_next(int index, int ptr, int reverse, int count)
         index_pointers[ptr + 1]--;
         if (count == 0)
         {
-            index_pointers[ptr]--;   
+            index_pointers[ptr]--;
         }
         if (index_pointers[ptr + 1] != index_pointers[ptr])
         {
@@ -209,16 +210,18 @@ double read_index_range_next(int index, int ptr, int reverse, int count)
 
 int read_index_offset(int index, int reverse, double offset)
 {
+    if (index_list_sorted[index].size() == 0) return 0;
+
     db_index_sorted::iterator it = reverse == 1 ? index_list_sorted[index].end() : index_list_sorted[index].begin();
     int loc = random_int();
-    while (index_pointers.count(loc) > 0)
+    while (index_pointers.count(loc) > 0 && loc != 0)
     {
         loc = random_int();
     }
     index_pointers[loc] = it;
-    
-    double i = offset;
-    while (i--)
+
+    int i = 0;
+    while (i < offset)
     {
         if (reverse)
         {
@@ -228,9 +231,11 @@ int read_index_offset(int index, int reverse, double offset)
         {
             index_pointers[loc]++;
         }
+        i++;
     }
 
-    if (!reverse) {
+    if (!reverse)
+    {
         index_pointers[loc]--;
     }
 
@@ -317,6 +322,8 @@ std::unordered_map<unsigned int, db_index_sorted_str::iterator> index_str_pointe
 
 std::string read_index_str(int index, int reverse)
 {
+    if (index_list_sorted_str[index].size() == 0) return "";
+
     int loc = random_int();
     while (index_str_pointers.count(loc) > 0)
     {
@@ -368,12 +375,15 @@ std::string read_index_str_next(int index, int ptr, int reverse, int count)
 std::string read_index_range_str(int index, std::string low, std::string high, int reverse)
 {
 
+    if (index_list_sorted_str[index].size() == 0) return "";
+
     db_index_sorted_str::iterator lower = index_list_sorted_str[index].lower_bound(low);
     db_index_sorted_str::iterator upper = index_list_sorted_str[index].upper_bound(high);
 
     int count = 0;
     db_index_sorted_str::iterator lower2 = lower;
-    while(lower2 != upper) {
+    while (lower2 != upper)
+    {
         lower2++;
         count++;
     }
@@ -400,7 +410,7 @@ std::string read_index_range_str_next(int index, int ptr, int reverse, int count
         index_str_pointers[ptr + 1]--;
         if (count == 0)
         {
-            index_str_pointers[ptr]--;   
+            index_str_pointers[ptr]--;
         }
         if (index_str_pointers[ptr + 1] != index_str_pointers[ptr])
         {
@@ -434,16 +444,18 @@ std::string read_index_range_str_next(int index, int ptr, int reverse, int count
 
 int read_index_offset_str(int index, int reverse, double offset)
 {
+
+    if (index_list_sorted_str[index].size() == 0) return 0;
     db_index_sorted_str::iterator it = reverse == 1 ? index_list_sorted_str[index].end() : index_list_sorted_str[index].begin();
     int loc = random_int();
-    while (index_str_pointers.count(loc) > 0)
+    while (index_str_pointers.count(loc) > 0 && loc != 0)
     {
         loc = random_int();
     }
     index_str_pointers[loc] = it;
 
-    double i = offset;
-    while (i--)
+    int i = 0;
+    while (i < offset)
     {
         if (reverse)
         {
@@ -453,8 +465,11 @@ int read_index_offset_str(int index, int reverse, double offset)
         {
             index_str_pointers[loc]++;
         }
+        i++;
     }
-    if (!reverse) {
+
+    if (!reverse)
+    {
         index_str_pointers[loc]--;
     }
     return loc;
@@ -539,6 +554,8 @@ std::unordered_map<unsigned int, db_index_sorted_int::iterator> index_int_pointe
 
 std::string read_index_int(int index, int reverse)
 {
+    if (index_list_sorted_int[index].size() == 0) return "";
+
     int loc = random_int();
     while (index_int_pointers.count(loc) > 0)
     {
@@ -589,13 +606,15 @@ int read_index_int_next(int index, int ptr, int reverse, int count)
 
 std::string read_index_range_int(int index, unsigned int low, unsigned int high, int reverse)
 {
+    if (index_list_sorted_int[index].size() == 0) return "";
 
     db_index_sorted_int::iterator lower = index_list_sorted_int[index].lower_bound(low);
     db_index_sorted_int::iterator upper = index_list_sorted_int[index].upper_bound(high);
 
     int count = 0;
     db_index_sorted_int::iterator lower2 = lower;
-    while(lower2 != upper) {
+    while (lower2 != upper)
+    {
         lower2++;
         count++;
     }
@@ -621,7 +640,7 @@ unsigned int read_index_range_int_next(int index, int ptr, int reverse, int coun
         index_int_pointers[ptr + 1]--;
         if (count == 0)
         {
-            index_int_pointers[ptr]--;   
+            index_int_pointers[ptr]--;
         }
         if (index_int_pointers[ptr + 1] != index_int_pointers[ptr])
         {
@@ -655,16 +674,17 @@ unsigned int read_index_range_int_next(int index, int ptr, int reverse, int coun
 
 int read_index_offset_int(int index, int reverse, double offset)
 {
+    if (index_list_sorted_int[index].size() == 0) return 0;
     db_index_sorted_int::iterator it = reverse == 1 ? index_list_sorted_int[index].end() : index_list_sorted_int[index].begin();
     int loc = random_int();
-    while (index_int_pointers.count(loc) > 0)
+    while (index_int_pointers.count(loc) > 0 && loc != 0)
     {
         loc = random_int();
     }
     index_int_pointers[loc] = it;
 
-    double i = offset;
-    while (i--)
+    int i = 0;
+    while (i < offset)
     {
         if (reverse)
         {
@@ -674,12 +694,14 @@ int read_index_offset_int(int index, int reverse, double offset)
         {
             index_int_pointers[loc]++;
         }
+        i++;
     }
 
-    if (reverse == 0) {
+    if (reverse == 0)
+    {
         index_int_pointers[loc]--;
     }
- 
+
     return loc;
 }
 
@@ -723,11 +745,10 @@ unsigned int read_index_offset_int_next(int index, int ptr, int reverse, double 
     return count;
 }
 
-
 // database code
 
-
-std::string database_create(std::string file, int keyType) {
+std::string database_create(std::string file, int keyType)
+{
     struct snapp_db thisDB;
 
     thisDB.keyType = keyType;
@@ -740,7 +761,8 @@ std::string database_create(std::string file, int keyType) {
     const char *cstr = file.c_str();
 
     int open = sqlite3_open(cstr, &thisDB.db);
-    if (open != SQLITE_OK) {
+    if (open != SQLITE_OK)
+    {
         printf("ERROR opening DB: %s\n", sqlite3_errmsg(thisDB.db));
         return "";
     }
@@ -755,18 +777,19 @@ std::string database_create(std::string file, int keyType) {
 
     int result = sqlite3_step(ppStmt);
     sqlite3_finalize(ppStmt);
-    if (result != SQLITE_DONE) {
+    if (result != SQLITE_DONE)
+    {
         printf("DB Error: %s\n", sqlite3_errmsg(thisDB.db));
         return "";
     }
 
     // insert statement
-    std::string insertStmt = "INSERT INTO 'values' (id, data) VALUES(?, ?);";
+    std::string insertStmt = "INSERT INTO 'values' (id, data) VALUES(?, ?) ON CONFLICT(id) DO UPDATE SET data = ?;";
     const char *insertStr = insertStmt.c_str();
     sqlite3_prepare_v2(thisDB.db, insertStr, -1, &thisDB.put, NULL);
 
     // update statement
-    std::string updateStmt = "UPDATE 'values' SET data = ? WHERE id = ?;";
+    std::string updateStmt = "UPDATE 'values' SET data = ? WHERE id = ?";
     const char *updateStr = updateStmt.c_str();
     sqlite3_prepare_v2(thisDB.db, updateStr, -1, &thisDB.update, NULL);
 
@@ -779,41 +802,45 @@ std::string database_create(std::string file, int keyType) {
     std::string delStmt = "DELETE FROM 'values' WHERE id = ?;";
     const char *delStr = delStmt.c_str();
     sqlite3_prepare_v2(thisDB.db, delStr, -1, &thisDB.del, NULL);
-    
-    switch(keyType) {
-        case 0: // double
-            thisDB.index = new_index();
+
+    switch (keyType)
+    {
+    case 0: // double
+        thisDB.index = new_index();
         break;
-        case 1: // string
-            thisDB.index = new_index_str();
+    case 1: // string
+        thisDB.index = new_index_str();
         break;
-        case 2: // integer
-            thisDB.index = new_index_int();
+    case 2: // integer
+        thisDB.index = new_index_int();
         break;
     }
     databases[loc] = thisDB;
 
-
     return std::to_string(loc) + "," + std::to_string(thisDB.index);
 }
 
-
-int database_put(int db, int isNew, std::string key, std::string value) {
+int database_put(int db, int isNew, std::string key, std::string value)
+{
     struct snapp_db thisDB = databases[db];
-    
+
     const char *keyStr = key.c_str();
     const char *valueStr = value.c_str();
     int result;
 
-    if (isNew) {
+    if (isNew)
+    {
         sqlite3_clear_bindings(thisDB.put);
         sqlite3_reset(thisDB.put);
 
         sqlite3_bind_text(thisDB.put, 1, keyStr, -1, SQLITE_STATIC);
         sqlite3_bind_text(thisDB.put, 2, valueStr, -1, SQLITE_STATIC);
+        sqlite3_bind_text(thisDB.put, 3, valueStr, -1, SQLITE_STATIC);
 
         result = sqlite3_step(thisDB.put);
-    } else {
+    }
+    else
+    {
         sqlite3_clear_bindings(thisDB.update);
         sqlite3_reset(thisDB.update);
 
@@ -823,16 +850,17 @@ int database_put(int db, int isNew, std::string key, std::string value) {
         result = sqlite3_step(thisDB.update);
     }
 
-    if (result != SQLITE_DONE) {
+    if (result != SQLITE_DONE)
+    {
         printf("DB Error: %s\n", sqlite3_errmsg(thisDB.db));
         return 1;
     }
 
-
     return 0;
 }
 
-std::string database_get(int db, std::string key) {
+std::string database_get(int db, std::string key)
+{
 
     struct snapp_db thisDB = databases[db];
 
@@ -845,19 +873,22 @@ std::string database_get(int db, std::string key) {
 
     int rc = sqlite3_step(thisDB.get);
 
-    if (rc == SQLITE_ROW) {
-        std::string result = std::string(reinterpret_cast<const char*>(
-            sqlite3_column_text(thisDB.get, 0)
-        ));
+    if (rc == SQLITE_ROW)
+    {
+        std::string result = std::string(reinterpret_cast<const char *>(
+            sqlite3_column_text(thisDB.get, 0)));
         return result;
-    } else {
+    }
+    else
+    {
         return "";
     }
 }
 
-int database_del(int db, std::string key) {
+int database_del(int db, std::string key)
+{
     struct snapp_db thisDB = databases[db];
-    
+
     const char *keyStr = key.c_str();
 
     sqlite3_clear_bindings(thisDB.del);
@@ -867,7 +898,8 @@ int database_del(int db, std::string key) {
 
     int result = sqlite3_step(thisDB.del);
 
-    if (result != SQLITE_DONE) {
+    if (result != SQLITE_DONE)
+    {
         printf("DB Error: %s\n", sqlite3_errmsg(thisDB.db));
         return 1;
     }
@@ -875,19 +907,20 @@ int database_del(int db, std::string key) {
     return 0;
 }
 
-int database_close(int db) {
+int database_close(int db)
+{
     sqlite3_finalize(databases[db].put);
     sqlite3_finalize(databases[db].del);
     sqlite3_finalize(databases[db].get);
     sqlite3_finalize(databases[db].update);
     sqlite3_close(databases[db].db);
-    
+
     databases.erase(db);
     return 0;
 }
 
-
-int database_cursor(int db) {
+std::string database_cursor(int db)
+{
 
     struct snapp_db thisDB = databases[db];
 
@@ -905,13 +938,30 @@ int database_cursor(int db) {
         loc = random_int();
     }
     database_cursors[loc] = ppStmt;
-    return loc;
+
+    std::string countStmt = "SELECT COUNT(*) FROM 'values';";
+
+    const char *ctStr = countStmt.c_str();
+
+    sqlite3_stmt *cntStmt;
+
+    sqlite3_prepare_v2(thisDB.db, ctStr, -1, &cntStmt, NULL);
+    sqlite3_step(cntStmt);
+
+    std::string result = std::string(reinterpret_cast<const char *>(
+            sqlite3_column_text(cntStmt, 0)));
+
+    sqlite3_finalize(cntStmt);
+
+    return std::to_string(loc) + "," + result;
 }
 
-std::string database_cursor_next(int db, int cursor, int count) {
+std::string database_cursor_next(int db, int cursor, int count)
+{
     struct snapp_db thisDB = databases[db];
 
-    if (!database_cursors[cursor]) {
+    if (!database_cursors[cursor])
+    {
         return "";
     }
 
@@ -919,19 +969,22 @@ std::string database_cursor_next(int db, int cursor, int count) {
 
     int next = sqlite3_step(ppStmt);
 
-    if (next == SQLITE_ROW) {
-        std::string result = std::string(reinterpret_cast<const char*>(
-            sqlite3_column_text(ppStmt, 0)
-        ));
+    if (next == SQLITE_ROW)
+    {
+        std::string result = std::string(reinterpret_cast<const char *>(
+            sqlite3_column_text(ppStmt, 0)));
         return result;
-    } else {
+    }
+    else
+    {
         sqlite3_finalize(ppStmt);
         database_cursors.erase(cursor);
         return "";
     }
 }
 
-int database_clear(int db) {
+int database_clear(int db)
+{
     struct snapp_db thisDB = databases[db];
     std::string delAll = "DELETE FROM 'values';";
 
@@ -943,22 +996,25 @@ int database_clear(int db) {
 
     int result = sqlite3_step(ppStmt);
     sqlite3_finalize(ppStmt);
-    if (result != SQLITE_DONE) {
+    if (result != SQLITE_DONE)
+    {
         printf("DB Error: %s\n", sqlite3_errmsg(thisDB.db));
         return 1;
     }
     return 0;
 }
 
-int database_start_tx(int db) {
+int database_start_tx(int db)
+{
     struct snapp_db thisDB = databases[db];
     sqlite3_exec(thisDB.db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
     return 0;
 }
 
-int database_end_tx(int db) {
+int database_end_tx(int db)
+{
     struct snapp_db thisDB = databases[db];
-    sqlite3_exec(thisDB.db, "END TRANSACTION;", NULL, NULL, NULL);
+    sqlite3_exec(thisDB.db, "COMMIT;", NULL, NULL, NULL);
     return 0;
 }
 

@@ -401,7 +401,6 @@ var SnapDB = /** @class */ (function () {
 }());
 exports.SnapDB = SnapDB;
 /*
-
 function makeid() {
     var text = "";
     var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -412,41 +411,39 @@ function makeid() {
     return text;
 }
 
-const db = new SnapDB<number>("my-db-test", "int", true);
+const db = new SnapDB<number>("my-db-test", "int");
 db.ready().then(() => {
     console.log("READY");
 
+    let arr: any[] = [];
+    let count = 10000;
+    for (let i = 0; i < count; i++) {
+        arr.push([i + 1, makeid(), makeid()]);
+    }
 
-        let arr: any[] = [];
-        let count = 10000;
-        for (let i = 1; i <= count; i++) {
-            arr.push([i + 1, makeid(), makeid()]);
-        }
-    
-        arr = arr.sort((a, b) => Math.random() > 0.5 ? 1 : -1);
-        const writeStart = Date.now();
-        let last: any;
-        Promise.all(arr.map((r) => {
-            return db.put(r[0], r[2]);
-        })).then(() => {
-            console.log((count / (Date.now() - writeStart) * 1000).toLocaleString(), "Records Per Second (WRITE)");
-            const start = Date.now();
-            console.time("READ");
-            let ct = 0;
-            db.getAll((key, data) => {
-                ct++;
-                // console.log(key, data);
-            }, (err) => {
-                if (err) {
-                    console.log(err);
-                }
-                const time = (Date.now() - start);
-                db.getCount().then((ct) => {
-                    console.log(((ct / time) * 1000).toLocaleString(), "Records Per Second (READ)");
-                });
-            }, false);
-        })
-});
-
-*/ 
+    arr = arr.sort((a, b) => Math.random() > 0.5 ? 1 : -1);
+    const writeStart = Date.now();
+    let last: any;
+    db.begin_transaction().then(() => {
+        return Promise.all(arr.map(r => db.put(r[0], r[2])))
+    }).then(() => {
+        return db.end_transaction();
+    }).then(() => {
+        console.log((count / (Date.now() - writeStart) * 1000).toLocaleString(), "Records Per Second (WRITE)");
+        const start = Date.now();
+        let ct = 0;
+        db.getAll((key, data) => {
+            ct++;
+            // console.log(key, data);
+        }, (err) => {
+            if (err) {
+                console.log(err);
+            }
+            const time = (Date.now() - start);
+            db.getCount().then((ct) => {
+                console.log(((ct / time) * 1000).toLocaleString(), "Records Per Second (READ)");
+            });
+        }, false);
+    })
+});*/ 
 //# sourceMappingURL=index.js.map

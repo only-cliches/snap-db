@@ -16,13 +16,14 @@ function makeid(length) {
 
 const testLevelDB = (sampleData) => {
     return new Promise((res, rej) => {
-
-        rimraf.sync("my_db");
+        const dbName = makeid(10);
         
-        var db = level("my_db");
+        
+        var db = level(dbName);
         const sampleBatch = sampleData.map(s => {
             return {type: "put", key: s[0], value: s[1]};
         });
+        process.exit();
         let start = Date.now();
         db.batch(sampleBatch, (err) => {
             if (err) return console.log(err);
@@ -37,6 +38,7 @@ const testLevelDB = (sampleData) => {
                 db.close();
                 let end = Date.now();
                 setTimeout(() => {
+                    rimraf.sync(dbName);
                     res([
                         Math.round(count / (end - start) * 1000),
                         writeSpeed
@@ -61,13 +63,14 @@ const testSnapDB = (sampleData) => {
         let writeSpeed = 0;
         db.ready().then(() => {
             start = Date.now();
-            db.begin_transaction();
-            sampleData.forEach((s, i) => {
-                db.put(s[0], s[1]);
-            });
-            db.end_transaction();
-            writeSpeed = Math.round(sampleData.length / (Date.now() - start) * 1000);
-            return Promise.resolve();
+            return db.begin_transaction().then(() => {
+                return Promise.all(sampleData.map(s => db.put(s[0], s[1])))
+            }).then(() => {
+                return db.end_transaction();
+            }).then(() => {
+                writeSpeed = Math.round(sampleData.length / (Date.now() - start) * 1000);
+                return Promise.resolve();
+            })
         }).then(() => {
             
             start = Date.now();
@@ -90,19 +93,21 @@ let data = [];
 for (let i = 0; i < 10000; i++) {
     data.push([makeid(10), makeid()]);
 }
-
+const average = (array) => Math.round(array.reduce((a, b) => a + b) / array.length);
 let results2 = [];
 const testSnapDBMany = () => {
-    testSnapDB(data).then((result) => {
+    testSnapDB(data.slice()).then((result) => {
         results2.push(result);
         if (results2.length < 5) {
             testSnapDBMany();
         } else {
             
-            console.log("Snap DB");
-            console.log(Math.round(results2.reduce((p, c) => (p[1] || 0) + c[1])/results2.length).toLocaleString(), "op/s (WRITE)");
-            console.log(Math.round(results2.reduce((p, c) => (p[0] || 0) + c[0])/results2.length).toLocaleString(), "op/s (READ)");
-            testLevelMany();
+            const writes = results2.map(s => s[1]);
+            const reads = results2.map(s => s[0]);
+            console.log("SnapDB");
+            console.log(average(writes).toLocaleString(), "op/s (WRITE)");
+            console.log(average(reads).toLocaleString(), "op/s (READ)");
+            // testLevelMany();
         }
     })
 }
@@ -111,20 +116,22 @@ const testSnapDBMany = () => {
 
 let results = [];
 const testLevelMany = () => {
-    testLevelDB(data).then((result) => {
+    testLevelDB(data.slice()).then((result) => {
         results.push(result);
         if (results.length < 5) {
             testLevelMany();
         } else {
             rimraf.sync("my_db");
-            console.log("Level DB");
-            console.log(Math.round(results.reduce((p, c) => (p[1] || 0) + c[1])/results.length).toLocaleString(), "op/s (WRITE)");
-            console.log(Math.round(results.reduce((p, c) => (p[0] || 0) + c[0])/results.length).toLocaleString(), "op/s (READ)");
-            // testSnapDBMany();
+            console.log("LevelDB");
+            const writes = results.map(s => s[1]);
+            const reads = results.map(s => s[0]);
+            console.log(average(writes).toLocaleString(), "op/s (WRITE)");
+            console.log(average(reads).toLocaleString(), "op/s (READ)");
+            testSnapDBMany();
         }
     })
 }
 
-// testLevelMany();
-testSnapDBMany();
+testLevelMany();
+// testSnapDBMany();
 

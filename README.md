@@ -1,5 +1,5 @@
 # Snap-DB
-Simple Javascript/Webassembly key-value store
+Fast & Durable key-value store for NodeJS/Electron
 
 Get a running database in a snap!
 
@@ -12,21 +12,20 @@ Get a running database in a snap!
   </a>
 </p>
 
-SnapDB is a pure javascript persistent key-value store that provides ordered mapping from keys to string values.  You can optionally also save values into memory, significantly increasing read performance.
+SnapDB is a pure javascript persistent key-value store that provides ordered mapping from keys to string values. Data is persisted to disk using an Log Structure Merge Tree (LSM) inspired by LevelDB. You can optionally also save values into memory, significantly increasing read performance.
 
 ## Features
 
 - Zero dependencies.
 - Zero compiling.
 - Zero configuring.
-- ACID Compliant & Transaction support.
+- ACID Compliant with transaction support.
 - Constant time range & offset/limit queries.
 - Optimized with WebAssembly indexes.
 - Typescript & Babel friendly.
-- Works in NodeJS and NodeJS like environments.
+- Works in NodeJS and NodeJS like environments like Electron.
 - Keys are sorted, allowing *very fast* range queries.
 - Data is durable in the face of application or power failure.
-- Data is stored in SQLite database format.
 - Runs in it's own thread to prevent blocking.
 
 ## Installation
@@ -41,9 +40,9 @@ npm i snap-db --save
 import { SnapDB } from "snap-db";
 
 const db = new SnapDB(
-    "my_db", // database filename
+    "my_db", // database folder
     "int", // key type, can be "int", "string" or "float"
-    false // enable or disable database value cache
+    false // enable or disable value cache
 );
 
 // wait for db to be ready
@@ -66,7 +65,7 @@ The `SnapDB` class accepts up to 3 arguments in the constructor.
 
 | Argument | Type                       | Details                                                                                                              |
 |----------|----------------------------|----------------------------------------------------------------------------------------------------------------------|
-| fileName | string                     | The file to persist data to or :memory: for in memory store only.                |
+| folderName | string                     | The folder to persist data to.                |
 | keyType  | "int" \| "string" \| "float" | The database can only use one type of key at a time.  You cannot change the key after the database has been created. |
 | useCache | bool                       | If enabled, data will be loaded to/from js memory in addition to being saved to disk, allowing MUCH faster reads.             |
 
@@ -97,7 +96,7 @@ Used to get the value of a single key.
 Deletes a key and it's value from the database.
 
 #### .getAllKeys(onKey: (key: any) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
-Gets all the keys in the database, use the callback functions to capture the data.  Can optionally return the keys in reverse.
+Gets all the keys in the database, use the callback functions to capture the data.  Can optionally return the keys in reverse.  This is orders of magnitude faster than the `getAll` method.
 
 #### .getAll(onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
 Gets all the keys & values in the database, use the callback functions to capture the data. Can optionally return the keys in reverse order.

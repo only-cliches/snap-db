@@ -1,4 +1,39 @@
 const wasm = require("./db.js");
+import * as fs from "fs";
+import * as path from "path";
+
+const binaryInsert = (arr: any[], value: any, remove: boolean, startVal?: number, endVal?: number): boolean => {
+
+    const start = startVal || 0;
+    const end = endVal || arr.length;
+
+    if (arr[start] > value) {
+        if (!remove) arr.unshift(value);
+        return remove ? false : true;
+    }
+    if (arr[end] < value) {
+        if (!remove) arr.push(value);
+        return remove ? false : true;
+    }
+
+    const m = Math.floor((start + end) / 2);
+    if (value == arr[m]) { // already in array
+        if (remove) arr.splice(m, 1);
+        return remove ? true : false;
+    }
+    if (end - 1 == start) {
+        if (!remove) arr.splice(end, 0, value);
+        return remove ? false : true;
+    }
+
+    if (value > arr[m]) return binaryInsert(arr, value, remove, m, end);
+    if (value < arr[m]) return binaryInsert(arr, value, remove, start, m);
+
+    if (!remove) arr.splice(end, 0, value);
+    return remove ? false : true;
+};
+
+const NULLBYTE = new Buffer([0]);
 
 class SnapWorker {
 
@@ -10,6 +45,32 @@ class SnapWorker {
     public _dbNum: number;
     private _mod: any;
 
+    private _memTable: {
+        [key: string]: any;
+    } = {};
+
+    private _memTableSize: number = 0;
+
+    private _logHandle: number;
+
+    static tomb = NULLBYTE;
+
+    private _keys: {
+        [key: string]: {
+            file: number;
+            offset: number;
+            size: number;
+        }
+    } = {};
+
+    private _manifestData: {
+        inc: number,
+        lvl: number[][];
+    } = {
+        inc: 0,
+        lvl: []
+    };
+
     constructor(
         public _path: string,
         public keyType: string,
@@ -18,7 +79,7 @@ class SnapWorker {
         this._mod = wasm;
         const checkLoaded = () => {
             if (this._mod.loaded) {
-                this._getReady();
+                this._checkForMigration();
             } else {
                 setTimeout(checkLoaded, 10);
             }
@@ -26,16 +87,296 @@ class SnapWorker {
         checkLoaded();
     }
 
-    private _getReady() {
+    private _getFiles() {
+        try {
+            if (!fs.existsSync(this._path)) {
+                fs.mkdirSync(this._path);
+            }
+            // create the log file if it's not there.
+            this._logHandle = fs.openSync(path.join(this._path, "LOG"), "a+");
 
-        const dbData = this._mod.database_create(this._path, { "float": 0, "string": 1, "int": 2 }[this.keyType]);
-        if (!dbData) {
-            throw new Error("Unable to connect to database at " + this._path);
+            if (fs.existsSync(path.join(this._path, "manifest-temp.json"))) {
+                // restore from crash
+                this._manifestData = JSON.parse((fs.readFileSync(path.join(this._path, "manifest-temp.json")) || new Buffer([])).toString("utf-8") || "{'inc': 0, 'lvl': []}");
+                
+                // write to main manifest
+                fs.writeFileSync(path.join(this._path, "manifest.json"), JSON.stringify(this._manifestData));
+                const fd2 = fs.openSync(path.join(this._path, "manifest.json"), "rs+");
+                fs.fsyncSync(fd2);
+                fs.closeSync(fd2);
+
+                // remove temp file
+                fs.unlinkSync(path.join(this._path, "manifest-temp.json"));
+            } else {
+                // create the manifest file if it's not there.
+                fs.openSync(path.join(this._path, "manifest.json"), "w+");
+                // read from the manifest file
+                this._manifestData = JSON.parse((fs.readFileSync(path.join(this._path, "manifest.json")) || new Buffer([])).toString("utf-8") || "{'inc': 0, 'lvl': []}");
+            }
+
+            this._loadKeys();
+
+        } catch(e) {
+            console.error("Problem creating or reading database files.");
+            console.error(e);
         }
-        this._indexNum = parseInt(dbData.split(",")[1]);
-        this._dbNum = parseInt(dbData.split(",")[0]);
 
-        this._loadKeys();
+    }
+
+    private _del(key: any, batch?: boolean) {
+        const keyLen = String(key).length;
+        const valueLen = -1;
+        fs.writeSync(this._logHandle, new Buffer(keyLen + "," + valueLen + "," + String(key)));
+        fs.writeSync(this._logHandle, NULLBYTE);
+        fs.fsyncSync(this._logHandle);
+        this._memTable[key] = SnapWorker.tomb;
+        this._memTableSize += keyLen;
+        delete this._keys[key];
+        delete this._cache[key];
+
+        if (!batch) {
+            this._maybeFlush();
+        }
+    }
+
+    private _put(key: any, value: string, batch?: boolean) {
+        // write key to index
+        const wasmFNs = { "string": this._mod.add_to_index_str, "int": this._mod.add_to_index_int, "float": this._mod.add_to_index };
+        wasmFNs[this.keyType](this._indexNum, key);
+
+        if (this.memoryCache) {
+            this._cache[key] = value;
+        }
+        
+        // write key & value to log
+        const keyLen = String(key).length;
+        const valueLen = String(value).length;
+        fs.writeSync(this._logHandle, new Buffer(keyLen + "," + valueLen + ","));
+        fs.writeSync(this._logHandle, new Buffer(String(key) + String(value)));
+        fs.writeSync(this._logHandle, NULLBYTE); // confirms a complete write for this record
+        // flush to disk
+        fs.fsyncSync(this._logHandle);
+    
+        // mark key as in memtable
+        this._keys[key] = {file: -1, offset: 0, size: 0};
+        this._memTable[key] = String(value);
+        this._memTableSize += keyLen;
+        this._memTableSize += valueLen;
+
+        if (this.memoryCache) {
+            this._cache[key] = String(value);
+        }
+
+        if (!batch) {
+            this._maybeFlush();
+        }
+        
+    }
+
+    private _get(key: any, cb: (err, value: string) => void) {
+        // check cache first
+        if (this.memoryCache) {
+            cb(undefined, this._cache[key]);
+            return;
+        }
+
+        // check memtable
+        if (this._memTable[key]) {
+            if (this._memTable[key] === SnapWorker.tomb) {
+                cb("Key not found!", "");
+                return;
+            }
+            cb(undefined, this._memTable[key]);
+            return;
+        }
+
+        // read from disk
+        if (typeof this._keys[key] === undefined) {
+            cb("Key not found!", "");
+            return;
+        }
+        const fileData = this._keys[key];
+        const file = this._fileName(fileData.file) + ".dta"
+        const stream = fs.createReadStream(path.join(this._path, file), {encoding: "utf-8", autoClose: true, start: fileData.offset, end: fileData.offset + fileData.size});
+
+        let value = "";
+        stream
+        .on('data', (chunk) => {
+            value += chunk.toString();
+        }).on("error", (err) => {
+            cb(err, "");
+        }).on("close", () => {
+            cb(undefined, value);
+        })
+    }
+
+    private _writeManifestUpdate() {
+        // write manifest to temp
+        fs.writeFileSync(path.join(this._path, "manifest-temp.json"), JSON.stringify(this._manifestData));
+        const fd = fs.openSync(path.join(this._path, "manifest-temp.json"), "rs+");
+        fs.fsyncSync(fd);
+        fs.closeSync(fd);
+
+        // write to actual file
+        fs.writeFileSync(path.join(this._path, "manifest.json"), JSON.stringify(this._manifestData));
+        const fd2 = fs.openSync(path.join(this._path, "manifest.json"), "rs+");
+        fs.fsyncSync(fd2);
+        fs.closeSync(fd2);
+
+        // remove temp
+        fs.unlinkSync(path.join(this._path, "manifest-temp.json"));
+    }
+
+    private _fileName(idx: number) {
+        if (String(idx).length > 9) {
+            return String(idx);
+        }
+        return `000000000${idx}`.slice(-9);
+    }
+
+    private _maybeFlush() {
+        if (this._memTableSize > 4000) {
+            
+            const nextFile = this._manifestData.inc + 1;
+            
+            // remove possible partial files from previouse run
+            fs.unlinkSync(this._fileName(nextFile) + ".idx");
+            fs.unlinkSync(this._fileName(nextFile) + ".dta");
+
+            const levelFileIdx = fs.openSync(path.join(this._path, this._fileName(nextFile) + ".idx"), "w+");
+            const levelFileDta = fs.openSync(path.join(this._path, this._fileName(nextFile) + ".dta"), "w+");
+            const sortedKeys = Object.keys(this._memTable).sort((a, b) => a > b ? 1 : -1);
+            let dtaLen = 0;
+            let i = 0;
+            while (i < sortedKeys.length) {
+                const key = sortedKeys[i];
+                const data = this._memTable[key];
+
+                if (data === SnapWorker.tomb) { // tombstone
+                    // write index
+                    fs.writeSync(levelFileIdx, new Buffer(String(key))); // key charecters
+                    fs.writeSync(levelFileIdx, NULLBYTE) // null byte
+                    fs.writeSync(levelFileIdx, new Buffer(String(-1))) // tombstone
+                    fs.writeSync(levelFileIdx, NULLBYTE) // null byte
+
+                } else {
+                    // write index
+                    fs.writeSync(levelFileIdx, new Buffer(String(key))); // key charecters
+                    fs.writeSync(levelFileIdx, NULLBYTE) // null byte
+                    fs.writeSync(levelFileIdx, new Buffer(String(dtaLen))) // data start location
+                    fs.writeSync(levelFileIdx, NULLBYTE) // null byte
+                    fs.writeSync(levelFileIdx, new Buffer(String(data.length))) // data length
+                    fs.writeSync(levelFileIdx, NULLBYTE) // null byte
+                    
+                    // write data
+                    fs.writeSync(levelFileDta, new Buffer(data));
+
+                    // mark new location for data
+                    this._keys[key] = {file: nextFile, offset: dtaLen, size: data.length};
+
+                    dtaLen += data.length;
+                }
+                i++;
+            }
+
+            // checksums for integrity
+            const checksum = dtaLen % 256;
+            fs.writeSync(levelFileDta, new Buffer([checksum]));
+            fs.writeSync(levelFileIdx, new Buffer([checksum]));
+
+            // flush to disk
+            fs.fsyncSync(levelFileDta);
+            fs.fsyncSync(levelFileIdx);
+            fs.closeSync(levelFileDta);
+            fs.closeSync(levelFileIdx);
+
+            // update manifest
+            if (!this._manifestData.lvl[0]) {
+                this._manifestData.lvl[0] = [];
+            }
+            this._manifestData.lvl[0].push(nextFile);
+            this._manifestData.inc = nextFile;
+            this._writeManifestUpdate();
+
+            // empty memtable
+            this._memTable = {};
+            this._memTableSize = 0;
+
+            // empty logfile
+            fs.closeSync(this._logHandle);
+            fs.unlinkSync(path.join(this._path, "LOG"));
+            this._logHandle = fs.openSync(path.join(this._path, "LOG"), "a+");
+
+            this._maybeCompact();
+        }
+    }
+
+    private _maybeCompact() {
+        this._manifestData.lvl.forEach((lvl, i) => {
+            const maxSizeMB = Math.pow(10, i + 1);
+            let size = 0;
+            lvl.forEach((file) => {
+                const fName = this._fileName(file) + ".dta";
+                size += (fs.statSync(path.join(this._path, fName)).size / 1000000.0);
+            });
+            if (size > maxSizeMB) { // compact this level down to the next one
+
+            }
+        });
+    }
+
+    /**
+     * Migrate SQLite files to new database file format.
+     *
+     * @private
+     * @returns
+     * @memberof SnapWorker
+     */
+    private _checkForMigration() {
+        if (fs.existsSync(this._path) && !fs.lstatSync(this._path).isDirectory()) {
+            console.log("Attempting to migrate from SQLite database...");
+            console.log("If this process doesn't complete remove the '-old' from your SQLite database file and try again");
+            try {
+                fs.renameSync(this._path, this._path + "-old");
+                this._getFiles();
+                // SQLite database (old format)
+                // Read SQLite data and copy it to new format, then delete it
+                const dbData = this._mod.database_create(this._path + "-old", { "float": 0, "string": 1, "int": 2 }[this.keyType]);
+                if (!dbData) {
+                    throw new Error("Unable to connect to database at " + this._path + "-old");
+                }
+                this._indexNum = parseInt(dbData.split(",")[1]);
+                this._dbNum = parseInt(dbData.split(",")[0]);
+                const getAllFNS = { "string": this._mod.read_index_str, "int": this._mod.read_index_int, "float": this._mod.read_index };
+                const getALLFNS2 = { "string": this._mod.read_index_str_next, "int": this._mod.read_index_int_next, "float": this._mod.read_index_next };
+    
+                let itALL = getAllFNS[this.keyType](this._indexNum, 0);
+                if (!itALL) {
+                    this._ready();
+                    return;
+                }
+                itALL = itALL.split(",").map(s => parseInt(s));
+                let nextKeyALL: any;
+                let countALL = 0;
+    
+                while (countALL < itALL[1]) {
+                    nextKeyALL = getALLFNS2[this.keyType](this._indexNum, itALL[0], 0, countALL);
+                    this._put(nextKeyALL, this._mod.database_get(this._dbNum, String(nextKeyALL)));
+                    countALL++;
+                }
+                console.log("SQLite migration completed.");
+                this._ready();
+            } catch(e) {
+                console.error("Problem migrating from SQLite database!");
+                console.error(e);
+            }
+        } else {
+            this._getFiles();
+            this._ready();
+        }
+    }
+
+    private _ready() {
 
         process.on('message', (msg) => { // got message from master
             const key = msg.key;

@@ -1,6 +1,11 @@
 # TODO
 - Cluster support with support for parallel reads.
 
+# [1.0.6] 06-17-2019
+- Removed Webassembly requirement, keyspace is now limited to javascript memory.
+- Fixed a bug with compaction.
+- Fixed a bug with offset/limit.
+
 # [1.0.5] 06-17-2019
 - Readme typo fix.
 - A few code adjustments.

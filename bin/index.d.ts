@@ -16,6 +16,7 @@ export declare class SnapDB<K> {
     private _hasEvents;
     isCompacting: boolean;
     isTx: boolean;
+    clearCompactFiles: number[];
     /**
      * Creates an instance of SnapDB.
      *

@@ -1,8 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
-const wasm = require("./db.js");
 import { SnapManifest, writeManifestUpdate, fileName, VERSION, SnapIndex, tableGenerator, NULLBYTE } from "./common";
 import { BloomFilter, IbloomFilterObj } from "./bloom";
+import { createRBTree } from "./rbtree";
 
 export class SnapCompactor {
 
@@ -39,11 +39,7 @@ export class SnapCompactor {
     private _runCompaction() {
         this._manifestData = JSON.parse((fs.readFileSync(path.join(this.path, "manifest.json")) || new Buffer([])).toString("utf-8") || '{"inc": 0, "lvl": []}');
 
-        const wasmFNs = { "string": wasm.new_index_str, "int": wasm.new_index_int, "float": wasm.new_index };
-        const compactIndex = wasmFNs[this.keyType]();
-        let compactObj: {
-            [key: string]: any;
-        } = {};
+        let compactIndex = createRBTree();
 
         const hasOlderValues = (key, level: number): boolean => {
             let currentLevel = level + 1;
@@ -69,16 +65,21 @@ export class SnapCompactor {
         }
 
         const loadFile = (fileID: number, level: number) => {
-            const wasmFNs = { "string": wasm.add_to_index_str, "int": wasm.add_to_index_int, "float": wasm.add_to_index };
+            
             const index: SnapIndex = JSON.parse(fs.readFileSync(path.join(this.path, fileName(fileID) + ".idx"), "utf-8"));
             const data = fs.readFileSync(path.join(this.path, fileName(fileID) + ".dta"), "utf-8");
             Object.keys(index.keys).forEach((key) => {
-                wasmFNs[this.keyType](compactIndex, this.keyType === "string" ? key : parseFloat(key));
+                
+
                 if (index.keys[key][0] === -1) { // tombstone
                     // if higher level has this key, keep tombstone.  Otherwise discard it
-                    compactObj[key] = hasOlderValues(key, level) ? NULLBYTE : undefined;
+                    if (hasOlderValues(key, level)) {
+                        compactIndex = compactIndex.insert(this.keyType === "string" ? key : parseFloat(key), NULLBYTE);
+                    } else {
+                        compactIndex = compactIndex.remove(this.keyType === "string" ? key : parseFloat(key));
+                    }
                 } else {
-                    compactObj[key] = data.slice(index.keys[key][0], index.keys[key][0] + index.keys[key][1]);
+                    compactIndex = compactIndex.insert(this.keyType === "string" ? key : parseFloat(key), data.slice(index.keys[key][0], index.keys[key][0] + index.keys[key][1]));
                 }
             });
         }
@@ -114,7 +115,7 @@ export class SnapCompactor {
                     });
 
                     // write files to disk
-                    tableGenerator(1, this._manifestData, compactObj, this.keyType, this.path, compactIndex);
+                    tableGenerator(1, this._manifestData, this.keyType, this.path, compactIndex);
 
                 } else { // level 1+, only merge some files
 
@@ -160,12 +161,10 @@ export class SnapCompactor {
                     });
 
                     // write files to disk
-                    tableGenerator(i + 1, this._manifestData, compactObj, this.keyType, this.path, compactIndex);
+                    tableGenerator(i + 1, this._manifestData, this.keyType, this.path, compactIndex);
                 }
 
-                const wasmClearFns = { "string": wasm.empty_index_str, "int": wasm.empty_index_int, "float": wasm.empty_index };
-                wasmClearFns[this.keyType](compactIndex);
-                compactObj = {};
+                compactIndex = createRBTree();
             }
         });
 

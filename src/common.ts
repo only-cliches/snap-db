@@ -2,9 +2,10 @@ import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
 import { IbloomFilterObj, BloomFilter } from "./bloom";
+import { RedBlackTree } from "./rbtree";
 const wasm = require("./db.js");
 
-export const VERSION = 1.05;
+export const VERSION = 1.06;
 
 export const NULLBYTE = new Buffer([0]);
 
@@ -60,15 +61,9 @@ export const throttle = (scope: any, func: any, limit: number) => {
     };
 };
 
-export const tableGenerator = (level: number, manifest: SnapManifest, jsonData: any, keyType: string, dbPath: string, wasmIndex: number) => {
+export const tableGenerator = (level: number, manifest: SnapManifest, keyType: string, dbPath: string, index: RedBlackTree) => {
     
-
-    const wasmFNs3 = { "string": wasm.read_index_str, "int": wasm.read_index_int, "float": wasm.read_index };
-    const wasmFNs4 = { "string": wasm.read_index_str_next, "int": wasm.read_index_int_next, "float": wasm.read_index_next };
-
-    const it = wasmFNs3[keyType](wasmIndex, 0).split(",").map(s => parseInt(s));
-    let key: any;
-    let count = 0;
+    const it = index.begin();
 
     const writeNextFile = () => {
 
@@ -97,36 +92,39 @@ export const tableGenerator = (level: number, manifest: SnapManifest, jsonData: 
         let firstKey: any = undefined;
         let lastKey: any = undefined;
         let valueData: string = "";
+
+        let nextKey = it.key();
         
         // split files at 2 megabytes
-        while (count < it[1] && totalLen < 2000000) {
-            key = wasmFNs4[keyType](wasmIndex, it[0], 0, count);
+        while (it.valid() && totalLen < 2000000) {
+
             if (firstKey === undefined) {
-                firstKey = key;
+                firstKey = nextKey;
             }
-            lastKey = key;
+            lastKey = nextKey;
             
-            const strKey = String(key);
+            const strKey = String(nextKey);
             keys.push(strKey);
-            const data: string | Buffer = jsonData[key];
+            const data: string | Buffer = it.value();
     
             if (data === NULLBYTE) { // tombstone
                 // write index
-                indexJSON.keys[key] = [-1, 0]; // tombstone
+                indexJSON.keys[nextKey] = [-1, 0]; // tombstone
                 totalLen += strKey.length;
     
             } else {
                 // write index
-                indexJSON.keys[key] = [dataLen, data.length];
+                indexJSON.keys[nextKey] = [dataLen, data.length];
                 
                 // write data
                 valueData += data;
                 dataHash.update(data);
                 dataLen += data.length;
 
-                totalLen += String(strKey + dataLen + data.length).length;
+                totalLen += strKey.length + data.length;
             }
-            count++;
+            it.next();
+            nextKey = it.key();
         }
 
         if (keys.length) {

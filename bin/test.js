@@ -94,7 +94,7 @@ describe("SnapDB Tests", function () {
             dataFromDB.push([key, value]);
         }, function () {
             try {
-                var genData = data["int"].slice(99, 109);
+                var genData = data["int"].slice(100, 110);
                 chai_1.expect(dataFromDB).to.deep.equal(genData, "Integer offset select failed!");
                 done();
             }
@@ -109,7 +109,7 @@ describe("SnapDB Tests", function () {
             dataFromDB.push([key, value]);
         }, function () {
             try {
-                var genData = data["int"].slice().reverse().slice(99, 109);
+                var genData = data["int"].slice().reverse().slice(100, 110);
                 chai_1.expect(dataFromDB).to.deep.equal(genData, "Integer offset reverse select failed!");
                 done();
             }
@@ -185,7 +185,7 @@ describe("SnapDB Tests", function () {
             dataFromDB.push([key, value]);
         }, function () {
             try {
-                chai_1.expect(dataFromDB).to.deep.equal(data["flt"].slice(99, 109), "Float offset select failed!");
+                chai_1.expect(dataFromDB).to.deep.equal(data["flt"].slice(100, 110), "Float offset select failed!");
                 done();
             }
             catch (e) {
@@ -200,7 +200,7 @@ describe("SnapDB Tests", function () {
         }, function () {
             try {
                 var len = db_flt.getCount();
-                var genData = data["flt"].slice().reverse().slice(99, 109);
+                var genData = data["flt"].slice().reverse().slice(100, 110);
                 chai_1.expect(dataFromDB).to.deep.equal(genData, "Float offset reverse select failed!");
                 done();
             }
@@ -276,7 +276,7 @@ describe("SnapDB Tests", function () {
             dataFromDB.push([key, value]);
         }, function () {
             try {
-                chai_1.expect(dataFromDB).to.deep.equal(data["str"].slice(99, 109), "String offset select failed!");
+                chai_1.expect(dataFromDB).to.deep.equal(data["str"].slice(100, 110), "String offset select failed!");
                 done();
             }
             catch (e) {
@@ -291,7 +291,7 @@ describe("SnapDB Tests", function () {
         }, function () {
             try {
                 var len = db_str.getCount();
-                chai_1.expect(dataFromDB).to.deep.equal(data["str"].slice().reverse().slice(99, 109), "String offset reverse select failed!");
+                chai_1.expect(dataFromDB).to.deep.equal(data["str"].slice().reverse().slice(100, 110), "String offset reverse select failed!");
                 done();
             }
             catch (e) {

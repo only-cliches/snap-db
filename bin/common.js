@@ -4,7 +4,7 @@ var path = require("path");
 var crypto = require("crypto");
 var bloom_1 = require("./bloom");
 var wasm = require("./db.js");
-exports.VERSION = 1.05;
+exports.VERSION = 1.06;
 exports.NULLBYTE = new Buffer([0]);
 ;
 exports.writeManifestUpdate = function (dbPath, manifest) {
@@ -43,12 +43,8 @@ exports.throttle = function (scope, func, limit) {
         }, limit);
     };
 };
-exports.tableGenerator = function (level, manifest, jsonData, keyType, dbPath, wasmIndex) {
-    var wasmFNs3 = { "string": wasm.read_index_str, "int": wasm.read_index_int, "float": wasm.read_index };
-    var wasmFNs4 = { "string": wasm.read_index_str_next, "int": wasm.read_index_int_next, "float": wasm.read_index_next };
-    var it = wasmFNs3[keyType](wasmIndex, 0).split(",").map(function (s) { return parseInt(s); });
-    var key;
-    var count = 0;
+exports.tableGenerator = function (level, manifest, keyType, dbPath, index) {
+    var it = index.begin();
     var writeNextFile = function () {
         var nextFile = manifest.inc + 1;
         try {
@@ -71,31 +67,32 @@ exports.tableGenerator = function (level, manifest, jsonData, keyType, dbPath, w
         var firstKey = undefined;
         var lastKey = undefined;
         var valueData = "";
+        var nextKey = it.key();
         // split files at 2 megabytes
-        while (count < it[1] && totalLen < 2000000) {
-            key = wasmFNs4[keyType](wasmIndex, it[0], 0, count);
+        while (it.valid() && totalLen < 2000000) {
             if (firstKey === undefined) {
-                firstKey = key;
+                firstKey = nextKey;
             }
-            lastKey = key;
-            var strKey = String(key);
+            lastKey = nextKey;
+            var strKey = String(nextKey);
             keys.push(strKey);
-            var data = jsonData[key];
+            var data = it.value();
             if (data === exports.NULLBYTE) { // tombstone
                 // write index
-                indexJSON.keys[key] = [-1, 0]; // tombstone
+                indexJSON.keys[nextKey] = [-1, 0]; // tombstone
                 totalLen += strKey.length;
             }
             else {
                 // write index
-                indexJSON.keys[key] = [dataLen, data.length];
+                indexJSON.keys[nextKey] = [dataLen, data.length];
                 // write data
                 valueData += data;
                 dataHash.update(data);
                 dataLen += data.length;
-                totalLen += String(strKey + dataLen + data.length).length;
+                totalLen += strKey.length + data.length;
             }
-            count++;
+            it.next();
+            nextKey = it.key();
         }
         if (keys.length) {
             var levelFileIdx = fs.openSync(path.join(dbPath, exports.fileName(nextFile) + ".idx"), "a+");

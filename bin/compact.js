@@ -1,9 +1,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 var fs = require("fs");
 var path = require("path");
-var wasm = require("./db.js");
 var common_1 = require("./common");
 var bloom_1 = require("./bloom");
+var rbtree_1 = require("./rbtree");
 var SnapCompactor = /** @class */ (function () {
     function SnapCompactor(path, keyType, cache) {
         var _this = this;
@@ -32,9 +32,7 @@ var SnapCompactor = /** @class */ (function () {
     SnapCompactor.prototype._runCompaction = function () {
         var _this = this;
         this._manifestData = JSON.parse((fs.readFileSync(path.join(this.path, "manifest.json")) || new Buffer([])).toString("utf-8") || '{"inc": 0, "lvl": []}');
-        var wasmFNs = { "string": wasm.new_index_str, "int": wasm.new_index_int, "float": wasm.new_index };
-        var compactIndex = wasmFNs[this.keyType]();
-        var compactObj = {};
+        var compactIndex = rbtree_1.createRBTree();
         var hasOlderValues = function (key, level) {
             var currentLevel = level + 1;
             var nextLevel = function () {
@@ -57,17 +55,20 @@ var SnapCompactor = /** @class */ (function () {
             return nextLevel();
         };
         var loadFile = function (fileID, level) {
-            var wasmFNs = { "string": wasm.add_to_index_str, "int": wasm.add_to_index_int, "float": wasm.add_to_index };
             var index = JSON.parse(fs.readFileSync(path.join(_this.path, common_1.fileName(fileID) + ".idx"), "utf-8"));
             var data = fs.readFileSync(path.join(_this.path, common_1.fileName(fileID) + ".dta"), "utf-8");
             Object.keys(index.keys).forEach(function (key) {
-                wasmFNs[_this.keyType](compactIndex, _this.keyType === "string" ? key : parseFloat(key));
                 if (index.keys[key][0] === -1) { // tombstone
                     // if higher level has this key, keep tombstone.  Otherwise discard it
-                    compactObj[key] = hasOlderValues(key, level) ? common_1.NULLBYTE : undefined;
+                    if (hasOlderValues(key, level)) {
+                        compactIndex = compactIndex.insert(_this.keyType === "string" ? key : parseFloat(key), common_1.NULLBYTE);
+                    }
+                    else {
+                        compactIndex = compactIndex.remove(_this.keyType === "string" ? key : parseFloat(key));
+                    }
                 }
                 else {
-                    compactObj[key] = data.slice(index.keys[key][0], index.keys[key][0] + index.keys[key][1]);
+                    compactIndex = compactIndex.insert(_this.keyType === "string" ? key : parseFloat(key), data.slice(index.keys[key][0], index.keys[key][0] + index.keys[key][1]));
                 }
             });
         };
@@ -98,7 +99,7 @@ var SnapCompactor = /** @class */ (function () {
                         loadFile(file.i, 0);
                     });
                     // write files to disk
-                    common_1.tableGenerator(1, _this._manifestData, compactObj, _this.keyType, _this.path, compactIndex);
+                    common_1.tableGenerator(1, _this._manifestData, _this.keyType, _this.path, compactIndex);
                 }
                 else { // level 1+, only merge some files
                     // loop compaction marker around
@@ -140,11 +141,9 @@ var SnapCompactor = /** @class */ (function () {
                         }
                     });
                     // write files to disk
-                    common_1.tableGenerator(i + 1, _this._manifestData, compactObj, _this.keyType, _this.path, compactIndex);
+                    common_1.tableGenerator(i + 1, _this._manifestData, _this.keyType, _this.path, compactIndex);
                 }
-                var wasmClearFns = { "string": wasm.empty_index_str, "int": wasm.empty_index_int, "float": wasm.empty_index };
-                wasmClearFns[_this.keyType](compactIndex);
-                compactObj = {};
+                compactIndex = rbtree_1.createRBTree();
             }
         });
         // clear old files from manifest

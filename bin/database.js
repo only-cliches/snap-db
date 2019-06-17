@@ -4,6 +4,7 @@ var fs = require("fs");
 var path = require("path");
 var common_1 = require("./common");
 var bloom_1 = require("./bloom");
+var rbtree_1 = require("./rbtree");
 var SnapDatabase = /** @class */ (function () {
     function SnapDatabase(_path, keyType, memoryCache) {
         var _this = this;
@@ -11,7 +12,7 @@ var SnapDatabase = /** @class */ (function () {
         this.keyType = keyType;
         this.memoryCache = memoryCache;
         this._cache = {};
-        this._memTable = {};
+        this._memTable = rbtree_1.createRBTree();
         this._memTableSize = 0;
         this._manifestData = {
             v: common_1.VERSION,
@@ -24,6 +25,7 @@ var SnapDatabase = /** @class */ (function () {
         this._txNum = Math.round(Math.random() * 256);
         this._bloomCache = {};
         this._indexFileCache = {};
+        this._index = rbtree_1.createRBTree();
         this._indexCacheClear = common_1.throttle(this, function () {
             Object.keys(_this._indexFileCache).forEach(function (fileNum) {
                 var cache = _this._indexFileCache[fileNum];
@@ -33,22 +35,10 @@ var SnapDatabase = /** @class */ (function () {
                 }
             });
         }, 5000);
-        this._mod = wasm;
-        var checkLoaded = function () {
-            if (_this._mod.loaded) {
-                _this._checkForMigration();
-            }
-            else {
-                setTimeout(checkLoaded, 10);
-            }
-        };
-        checkLoaded();
+        this._checkForMigration();
     }
     SnapDatabase.prototype._getFiles = function () {
         try {
-            var wasmFNs = { "string": this._mod.new_index_str, "int": this._mod.new_index_int, "float": this._mod.new_index };
-            this._indexNum = wasmFNs[this.keyType]();
-            this._memTableIndex = wasmFNs[this.keyType]();
             if (!fs.existsSync(this._path)) {
                 fs.mkdirSync(this._path);
             }
@@ -80,8 +70,7 @@ var SnapDatabase = /** @class */ (function () {
         }
     };
     SnapDatabase.prototype._del = function (key, skiplog) {
-        var wasmFNs2 = { "string": this._mod.del_key_str, "int": this._mod.del_key_int, "float": this._mod.del_key };
-        wasmFNs2[this.keyType](this._indexNum, key);
+        this._index = this._index.remove(key);
         var keyLen = String(key).length;
         if (!skiplog) {
             fs.writeSync(this._logHandle, common_1.NULLBYTE);
@@ -91,15 +80,14 @@ var SnapDatabase = /** @class */ (function () {
                 fs.fsyncSync(this._logHandle);
             }
         }
-        this._memTable[key] = common_1.NULLBYTE;
+        this._memTable = this._memTable.insert(key, common_1.NULLBYTE);
         this._memTableSize += keyLen;
         delete this._cache[key];
         this._maybeFlushLog();
     };
     SnapDatabase.prototype._put = function (key, value, skiplog) {
         // write key to index
-        var wasmFNs = { "string": this._mod.add_to_index_str, "int": this._mod.add_to_index_int, "float": this._mod.add_to_index };
-        wasmFNs[this.keyType](this._indexNum, key);
+        this._index = this._index.insert(key, "");
         if (this.memoryCache) {
             this._cache[key] = value;
         }
@@ -116,12 +104,11 @@ var SnapDatabase = /** @class */ (function () {
             fs.fsyncSync(this._logHandle);
         }
         // mark key in memtable
-        this._memTable[key] = valueStr;
-        wasmFNs[this.keyType](this._memTableIndex, key);
+        this._memTable = this._memTable.insert(key, value);
         this._memTableSize += keyStr.length;
         this._memTableSize += valueStr.length;
         if (this.memoryCache) {
-            this._cache[key] = this._memTable[key];
+            this._cache[key] = value;
         }
         if (!skiplog)
             this._maybeFlushLog();
@@ -146,11 +133,12 @@ var SnapDatabase = /** @class */ (function () {
             }
         }
         // check memtable
-        if (this._memTable[key]) {
-            if (this._memTable[key] === common_1.NULLBYTE) { // tombstone
+        var memValue = this._memTable.get(key);
+        if (typeof memValue !== "undefined") {
+            if (memValue === common_1.NULLBYTE) { // tombstone
                 throw new Error("Key not found!");
             }
-            return this._memTable[key];
+            return memValue;
         }
         // find latest key entry on disk
         var strKey = String(key);
@@ -212,14 +200,12 @@ var SnapDatabase = /** @class */ (function () {
         }
         // flush log & memtable at 2 megabytes
         if (this._memTableSize > 2000000) {
-            common_1.tableGenerator(0, this._manifestData, this._memTable, this.keyType, this._path, this._memTableIndex);
+            common_1.tableGenerator(0, this._manifestData, this.keyType, this._path, this._memTable);
             // update manifest to disk
             common_1.writeManifestUpdate(this._path, this._manifestData);
             // empty memtable
-            this._memTable = {};
+            this._memTable = rbtree_1.createRBTree();
             this._memTableSize = 0;
-            var wasmClearFns = { "string": this._mod.empty_index_str, "int": this._mod.empty_index_int, "float": this._mod.empty_index };
-            wasmClearFns[this.keyType](this._memTableIndex);
             // empty logfile
             fs.closeSync(this._logHandle);
             fs.unlinkSync(path.join(this._path, "LOG"));
@@ -240,42 +226,51 @@ var SnapDatabase = /** @class */ (function () {
      * @memberof SnapWorker
      */
     SnapDatabase.prototype._checkForMigration = function () {
+        var _this = this;
         if (fs.existsSync(this._path) && !fs.lstatSync(this._path).isDirectory()) {
             console.log("Attempting to migrate from SQLite backend..");
             console.log("If this process doesn't complete remove the '-old' from your SQLite database file and try again");
-            try {
-                fs.renameSync(this._path, this._path + "-old");
-                this._getFiles();
-                // SQLite database (old format)
-                // Read SQLite data and copy it to new format, then delete it
-                var dbData = this._mod.database_create(this._path + "-old", { "float": 0, "string": 1, "int": 2 }[this.keyType]);
-                if (!dbData) {
-                    throw new Error("Unable to connect to database at " + this._path + "-old");
+            var loadWASM_1 = function () {
+                if (wasm.loaded) {
+                    try {
+                        fs.renameSync(_this._path, _this._path + "-old");
+                        _this._getFiles();
+                        // SQLite database (old format)
+                        // Read SQLite data and copy it to new format, then delete it
+                        var dbData = wasm.database_create(_this._path + "-old", { "float": 0, "string": 1, "int": 2 }[_this.keyType]);
+                        if (!dbData) {
+                            throw new Error("Unable to connect to database at " + _this._path + "-old");
+                        }
+                        var indexNum = parseInt(dbData.split(",")[1]);
+                        var dbNum = parseInt(dbData.split(",")[0]);
+                        var getAllFNS = { "string": wasm.read_index_str, "int": wasm.read_index_int, "float": wasm.read_index };
+                        var getALLFNS2 = { "string": wasm.read_index_str_next, "int": wasm.read_index_int_next, "float": wasm.read_index_next };
+                        var itALL = getAllFNS[_this.keyType](indexNum, 0);
+                        if (!itALL) {
+                            _this._listenForCommands();
+                            return;
+                        }
+                        itALL = itALL.split(",").map(function (s) { return parseInt(s); });
+                        var nextKeyALL = void 0;
+                        var countALL = 0;
+                        while (countALL < itALL[1]) {
+                            nextKeyALL = getALLFNS2[_this.keyType](indexNum, itALL[0], 0, countALL);
+                            _this._put(nextKeyALL, wasm.database_get(dbNum, String(nextKeyALL)));
+                            countALL++;
+                        }
+                        console.log("SQLite migration completed.");
+                        _this._listenForCommands();
+                    }
+                    catch (e) {
+                        console.error("Problem migrating from SQLite database!");
+                        console.error(e);
+                    }
                 }
-                this._indexNum = parseInt(dbData.split(",")[1]);
-                this._dbNum = parseInt(dbData.split(",")[0]);
-                var getAllFNS = { "string": this._mod.read_index_str, "int": this._mod.read_index_int, "float": this._mod.read_index };
-                var getALLFNS2 = { "string": this._mod.read_index_str_next, "int": this._mod.read_index_int_next, "float": this._mod.read_index_next };
-                var itALL = getAllFNS[this.keyType](this._indexNum, 0);
-                if (!itALL) {
-                    this._listenForCommands();
-                    return;
+                else {
+                    setTimeout(loadWASM_1, 100);
                 }
-                itALL = itALL.split(",").map(function (s) { return parseInt(s); });
-                var nextKeyALL = void 0;
-                var countALL = 0;
-                while (countALL < itALL[1]) {
-                    nextKeyALL = getALLFNS2[this.keyType](this._indexNum, itALL[0], 0, countALL);
-                    this._put(nextKeyALL, this._mod.database_get(this._dbNum, String(nextKeyALL)));
-                    countALL++;
-                }
-                console.log("SQLite migration completed.");
-                this._listenForCommands();
-            }
-            catch (e) {
-                console.error("Problem migrating from SQLite database!");
-                console.error(e);
-            }
+            };
+            loadWASM_1();
         }
         else {
             this._getFiles();
@@ -339,29 +334,28 @@ var SnapDatabase = /** @class */ (function () {
                     }
                     break;
                 case "snap-get-all-keys":
-                    var wasmFNs3 = { "string": _this._mod.read_index_str, "int": _this._mod.read_index_int, "float": _this._mod.read_index };
-                    var wasmFNs4 = { "string": _this._mod.read_index_str_next, "int": _this._mod.read_index_int_next, "float": _this._mod.read_index_next };
-                    var it_1 = wasmFNs3[_this.keyType](_this._indexNum, msg.reverse ? 1 : 0).split(",").map(function (s) { return parseInt(s); });
-                    if (!it_1) {
+                    var it_1 = msg.reverse ? _this._index.end() : _this._index.begin();
+                    if (!_this._index.length()) {
                         if (process.send)
                             process.send({ type: "snap-res-done", id: msg.id, data: [] });
                         return;
                     }
-                    var nextKey = 0;
-                    var count = 0;
-                    while (count < it_1[1]) {
-                        nextKey = wasmFNs4[_this.keyType](_this._indexNum, it_1[0], msg.reverse ? 1 : 0, count);
+                    while (it_1.valid()) {
                         if (process.send)
-                            process.send({ type: "snap-res", event: "get-keys", id: msg.id, data: ["response", nextKey] });
-                        count++;
+                            process.send({ type: "snap-res", event: "get-keys", id: msg.id, data: ["response", it_1.key()] });
+                        if (msg.reverse) {
+                            it_1.prev();
+                        }
+                        else {
+                            it_1.next();
+                        }
                     }
                     if (process.send)
                         process.send({ type: "snap-res-done", event: "get-keys-end", id: msg.id, data: [] });
                     break;
                 case "snap-count":
-                    var wasmCountFns = { "string": _this._mod.get_total_str, "int": _this._mod.get_total_int, "float": _this._mod.get_total };
                     if (process.send)
-                        process.send({ type: "snap-res-done", id: msg.id, event: "get-count", data: [undefined, wasmCountFns[_this.keyType](_this._indexNum)] });
+                        process.send({ type: "snap-res-done", id: msg.id, event: "get-count", data: [undefined, _this._index.length()] });
                     break;
                 case "snap-start-tx":
                     if (_this._doingTx === true) {
@@ -392,71 +386,82 @@ var SnapDatabase = /** @class */ (function () {
                         process.send({ type: "snap-res-done", id: msg.id, event: "tx-end", data: [undefined, _this._txNum] });
                     break;
                 case "snap-get-all":
-                    var getAllFNS = { "string": _this._mod.read_index_str, "int": _this._mod.read_index_int, "float": _this._mod.read_index };
-                    var getALLFNS2 = { "string": _this._mod.read_index_str_next, "int": _this._mod.read_index_int_next, "float": _this._mod.read_index_next };
-                    var itALL = getAllFNS[_this.keyType](_this._indexNum, msg.reverse ? 1 : 0);
-                    if (!itALL) {
+                    var itALL = msg.reverse ? _this._index.end() : _this._index.begin();
+                    if (!_this._index.length()) {
                         if (process.send)
                             process.send({ type: "snap-res-done", id: msg.id, event: "get-all-end", data: [] });
                         return;
                     }
-                    itALL = itALL.split(",").map(function (s) { return parseInt(s); });
-                    var nextKeyALL = void 0;
-                    var countALL = 0;
-                    while (countALL < itALL[1]) {
-                        nextKeyALL = getALLFNS2[_this.keyType](_this._indexNum, itALL[0], msg.reverse ? 1 : 0, countALL);
+                    while (itALL.valid()) {
                         if (process.send)
-                            process.send({ type: "snap-res", id: msg.id, event: "get-all", data: ["response", nextKeyALL, _this._get(nextKeyALL)] });
-                        countALL++;
+                            process.send({ type: "snap-res", id: msg.id, event: "get-all", data: ["response", itALL.key(), _this._get(itALL.key())] });
+                        if (msg.reverse) {
+                            itALL.prev();
+                        }
+                        else {
+                            itALL.next();
+                        }
                     }
                     if (process.send)
                         process.send({ type: "snap-res-done", id: msg.id, event: "get-all-end", data: [] });
                     break;
                 case "snap-get-offset":
-                    var offsetWasmFN = { "string": _this._mod.read_index_offset_str, "int": _this._mod.read_index_offset_int, "float": _this._mod.read_index_offset };
-                    var offsetWasmFN2 = { "string": _this._mod.read_index_offset_str_next, "int": _this._mod.read_index_offset_int_next, "float": _this._mod.read_index_offset_next };
-                    var offsetIT = offsetWasmFN[_this.keyType](_this._indexNum, msg.reverse ? 1 : 0, msg.offset);
-                    if (offsetIT === 0) {
+                    var offsetIT = msg.reverse ? _this._index.end() : _this._index.begin();
+                    if (!_this._index.length()) {
                         if (process.send)
                             process.send({ type: "snap-res-done", event: "get-offset-end", id: msg.id, data: [] });
                         return;
                     }
-                    var nextKeyOffset = 0;
-                    var countOffset = 0;
-                    while (countOffset < msg.limit) {
-                        nextKeyOffset = offsetWasmFN2[_this.keyType](_this._indexNum, offsetIT, msg.reverse ? 1 : 0, msg.limit, countOffset);
+                    var i = msg.offset || 0;
+                    while (i--) {
+                        if (msg.reverse) {
+                            offsetIT.prev();
+                        }
+                        else {
+                            offsetIT.next();
+                        }
+                    }
+                    i = 0;
+                    while (i < msg.limit && offsetIT.valid()) {
                         if (process.send)
-                            process.send({ type: "snap-res", id: msg.id, event: "get-offset", data: ["response", nextKeyOffset, _this._get(nextKeyOffset)] });
-                        countOffset++;
+                            process.send({ type: "snap-res", id: msg.id, event: "get-offset", data: ["response", offsetIT.key(), _this._get(offsetIT.key())] });
+                        if (msg.reverse) {
+                            offsetIT.prev();
+                        }
+                        else {
+                            offsetIT.next();
+                        }
+                        i++;
                     }
                     if (process.send)
                         process.send({ type: "snap-res-done", id: msg.id, event: "get-offset-end", data: [] });
                     break;
                 case "snap-get-range":
-                    var wasmFNsRange = { "string": _this._mod.read_index_range_str, "int": _this._mod.read_index_range_int, "float": _this._mod.read_index_range };
-                    var wasmFNsRange2 = { "string": _this._mod.read_index_range_str_next, "int": _this._mod.read_index_range_int_next, "float": _this._mod.read_index_range_next };
-                    var rangeIT = wasmFNsRange[_this.keyType](_this._indexNum, msg.lower, msg.higher, msg.reverse ? 1 : 0);
-                    if (!rangeIT) {
+                    var rangeIT = msg.reverse ? _this._index.le(msg.higher) : _this._index.ge(msg.lower);
+                    if (!_this._index.length()) {
                         if (process.send)
                             process.send({ type: "snap-res-done", id: msg.id, event: "get-range-end", data: [] });
                         return;
                     }
-                    rangeIT = rangeIT.split(",").map(function (s) { return parseInt(s); });
-                    var nextKeyRange = void 0;
-                    var countRange = 0;
-                    while (countRange < rangeIT[1]) {
-                        nextKeyRange = wasmFNsRange2[_this.keyType](_this._indexNum, rangeIT[0], msg.reverse ? 1 : 0, countRange);
+                    var nextKey = rangeIT.key();
+                    while (rangeIT.valid() && msg.reverse ? nextKey >= msg.lower : nextKey <= msg.higher) {
                         if (process.send)
-                            process.send({ type: "snap-res", id: msg.id, event: "get-range", data: ["response", nextKeyRange, _this._get(nextKeyRange)] });
-                        countRange++;
+                            process.send({ type: "snap-res", id: msg.id, event: "get-range", data: ["response", nextKey, _this._get(nextKey)] });
+                        if (msg.reverse) {
+                            rangeIT.prev();
+                        }
+                        else {
+                            rangeIT.next();
+                        }
+                        nextKey = rangeIT.key();
                     }
                     if (process.send)
                         process.send({ type: "snap-res-done", id: msg.id, event: "get-range-end", data: [] });
                     break;
                 case "snap-close":
-                    var wasmDelFns = { "string": _this._mod.empty_index_str, "int": _this._mod.empty_index_int, "float": _this._mod.empty_index };
                     // clear index
-                    wasmDelFns[_this.keyType](_this._indexNum);
+                    _this._index = rbtree_1.createRBTree();
+                    _this._memTable = rbtree_1.createRBTree();
                     // close log file
                     fs.closeSync(_this._logHandle);
                     _this._bloomCache = {};
@@ -466,9 +471,10 @@ var SnapDatabase = /** @class */ (function () {
                     break;
                 case "snap-clear":
                     _this._isCompacting = true;
-                    var wasmClearFns = { "string": _this._mod.empty_index_str, "int": _this._mod.empty_index_int, "float": _this._mod.empty_index };
-                    // clear index
-                    wasmClearFns[_this.keyType](_this._indexNum);
+                    _this._index = rbtree_1.createRBTree();
+                    _this._memTable = rbtree_1.createRBTree();
+                    _this._memTableSize = 0;
+                    fs.closeSync(_this._logHandle);
                     // clear database
                     // remove all files in db folder
                     fs.readdir(_this._path, function (err, files) {
@@ -482,7 +488,7 @@ var SnapDatabase = /** @class */ (function () {
                             });
                         }
                     });
-                    // setup new manifest
+                    // setup new manifest and log
                     _this._getFiles();
                     if (process.send)
                         process.send({ type: "snap-clear-done", id: msg.id, data: [] });
@@ -502,20 +508,14 @@ var SnapDatabase = /** @class */ (function () {
      * @memberof SnapDB
      */
     SnapDatabase.prototype._loadCache = function () {
-        var wasmFNs = { "string": this._mod.get_total_str, "int": this._mod.get_total_int, "float": this._mod.get_total };
-        var total = wasmFNs[this.keyType](this._indexNum);
+        var total = this._index.length();
         if (total === 0 || !this.memoryCache) {
             return;
         }
-        var getAllFNS = { "string": this._mod.read_index_str, "int": this._mod.read_index_int, "float": this._mod.read_index };
-        var getALLFNS2 = { "string": this._mod.read_index_str_next, "int": this._mod.read_index_int_next, "float": this._mod.read_index_next };
-        var itALL = getAllFNS[this.keyType](this._indexNum, 0).split(",").map(function (s) { return parseInt(s); });
-        var nextKeyALL = 0;
-        var countALL = 0;
-        while (countALL < itALL[1]) {
-            nextKeyALL = getALLFNS2[this.keyType](this._indexNum, itALL[0], 0, countALL);
-            this._cache[nextKeyALL] = this._get(nextKeyALL, true);
-            countALL++;
+        var it = this._index.begin();
+        while (it.hasNext()) {
+            this._cache[it.key()] = this._get(it.key(), true);
+            it.next();
         }
     };
     /**
@@ -675,12 +675,14 @@ var SnapDatabase = /** @class */ (function () {
                             while (i--) {
                                 var key = _this.keyType === "string" ? keys[i] : parseFloat(keys[i]);
                                 if (index.keys[keys[i]][0] === -1) { // delete
-                                    var wasmFNs2 = { "string": _this._mod.del_key_str, "int": _this._mod.del_key_int, "float": _this._mod.del_key };
-                                    wasmFNs2[_this.keyType](_this._indexNum, key);
+                                    _this._index = _this._index.remove(key);
+                                    //const wasmFNs2 = { "string": this._mod.del_key_str, "int": this._mod.del_key_int, "float": this._mod.del_key };
+                                    //wasmFNs2[this.keyType](this._indexNum, key);
                                 }
                                 else { // add
-                                    var wasmFNs = { "string": _this._mod.add_to_index_str, "int": _this._mod.add_to_index_int, "float": _this._mod.add_to_index };
-                                    wasmFNs[_this.keyType](_this._indexNum, key);
+                                    _this._index = _this._index.insert(key, "");
+                                    //const wasmFNs = { "string": this._mod.add_to_index_str, "int": this._mod.add_to_index_int, "float": this._mod.add_to_index };
+                                    //wasmFNs[this.keyType](this._indexNum, key);
                                 }
                             }
                         }

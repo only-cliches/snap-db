@@ -23,7 +23,6 @@ Uses synchronous filesystem methods to only perform append writes to disk, this 
 - Zero configuring.
 - ACID Compliant with transaction support.
 - Constant time range & offset/limit queries.
-- Optimized with WebAssembly indexes.
 - Typescript & Babel friendly.
 - Works in NodeJS and Electron.
 - Keys are sorted, allowing *very fast* range queries.
@@ -71,18 +70,6 @@ The `SnapDB` class accepts 3 arguments in the constructor.
 | folderName | string                     | The folder to persist data into.                |
 | keyType  | "int" \| "string" \| "float" | The database can only use one type of key at a time.  You cannot change the key after the database has been created. |
 | useCache | bool                       | If enabled, data will be loaded to/from js memory in addition to being saved to disk, allowing MUCH faster reads.             |
-
-SnapDB stores all database keys in WebAssembly memory, this means there's a maximum storage capacity of just under 4GB *for all keys*.
-
-The three `keyType`s correspond to different data types in WebAssembly.  Larger keys give you more flexibility but cost more space and thus further limit the maximum number of keys you can have.
-
-### Key Types
-
-| Type   | Bytes | Range                                | Details                                                                                                                                            |
-|--------|-------|--------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
-| int    | 4     | 0 - 4,294,967,295                    | Integer type, the smallest and fastest index type.                                        |
-| float  | 8     | 1.7E +/- 308                         | Equivalent to `double` type in C/C++, use this if you need decimal numbers.               |
-| string | 1+    |  Up to 1 billion characters long | Allows you to use almost any size string as a key, memory usage is the same as the length of the key. |
 
 
 
@@ -174,6 +161,8 @@ You can listen for the following events:
 - Keys and values can technically be almost any size, but try to keep them under 10 megabytes.
 - Using transactions will batch writes/deletes together into a single disk seek, use them when you can.
 - Transactions cannot be nested.  Make sure you close each transaction before starting a new one.
+- Keys are kept in javascript memory for performance, in practice the size of the database you can have with SnapDB will be limited by how much memory nodejs/electron has access to.
+- Larger transactions take more memory to compact, if you run out of memory durring a transaction then break it up into smaller chunks.  Transactions in the tens of thousands should be fine, hundreds of thousands will likely be problematic.
 
 # MIT License
 

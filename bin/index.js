@@ -2,7 +2,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 var path = require("path");
 var child_process_1 = require("child_process");
 var common_1 = require("./common");
-var really_small_events_1 = require("really-small-events");
+var rse_1 = require("./rse");
 var fs = require("fs");
 var messageBuffer = {};
 exports.rand = function () {
@@ -29,11 +29,12 @@ var SnapDB = /** @class */ (function () {
         this._hasEvents = false;
         this.isCompacting = false;
         this.isTx = false;
+        this.clearCompactFiles = [];
         this._path = path.resolve(fileName);
-        this._rse = new really_small_events_1.ReallySmallEvents();
+        this._rse = new rse_1.ReallySmallEvents();
         this._worker = child_process_1.fork(path.join(__dirname, "database.js"));
         this._compactor = child_process_1.fork(path.join(__dirname, "compact.js"));
-        var clearCompactFiles = [];
+        this.clearCompactFiles = [];
         this._worker.on("message", function (msg) {
             switch (msg.type) {
                 case "snap-ready":
@@ -48,7 +49,7 @@ var SnapDB = /** @class */ (function () {
                 case "snap-compact-done":
                     _this.isCompacting = false;
                     // safe to remove old files now
-                    clearCompactFiles.forEach(function (fileID) {
+                    _this.clearCompactFiles.forEach(function (fileID) {
                         try {
                             fs.unlinkSync(path.join(_this._path, common_1.fileName(fileID) + ".dta"));
                             fs.unlinkSync(path.join(_this._path, common_1.fileName(fileID) + ".idx"));
@@ -57,7 +58,7 @@ var SnapDB = /** @class */ (function () {
                         catch (e) {
                         }
                     });
-                    clearCompactFiles = [];
+                    _this.clearCompactFiles = [];
                     if (_this._hasEvents)
                         _this._rse.trigger("compact-end", { target: _this, time: Date.now() });
                     break;
@@ -100,7 +101,7 @@ var SnapDB = /** @class */ (function () {
         });
         this._compactor.on("message", function (msg) {
             if (msg.type === "compact-done") {
-                clearCompactFiles = msg.files;
+                _this.clearCompactFiles = msg.files;
                 _this._worker.send({ type: "compact-done" });
             }
         });
@@ -238,7 +239,12 @@ var SnapDB = /** @class */ (function () {
                     res(data[1]);
                 }
             };
-            _this._worker.send({ type: "snap-put", key: key, value: data, id: msgId });
+            var parseKey = {
+                "string": function (k) { return String(k); },
+                "float": function (k) { return isNaN(k) || k === null ? 0 : parseFloat(k); },
+                "int": function (k) { return isNaN(k) || k === null ? 0 : parseInt(k); }
+            };
+            _this._worker.send({ type: "snap-put", key: parseKey[_this.keyType](key), value: data, id: msgId });
         });
     };
     /**
@@ -499,7 +505,8 @@ var SnapDB = /** @class */ (function () {
             // spin up new compactor thread
             _this._compactor = child_process_1.fork(path.join(__dirname, "compact.js"));
             _this._compactor.on("message", function (msg) {
-                if (msg === "compcact-done") {
+                if (msg.type === "compact-done") {
+                    _this.clearCompactFiles = msg.files;
                     _this._worker.send({ type: "compact-done" });
                 }
             });
@@ -521,9 +528,11 @@ function makeid() {
     return text;
 }
 
-const db = new SnapDB<number>("my-db-test", "int", true);
+
+const db = new SnapDB<number>("my-db-test", "int", false);
+console.time("READY");
 db.ready().then(() => {
-    console.log("READY");
+    console.timeEnd("READY");
 
     let arr: any[] = [];
     let count = 100000;
@@ -547,6 +556,7 @@ db.ready().then(() => {
             }
             const time = (Date.now() - start);
             db.getCount().then((ct) => {
+                console.log(ct, "RECORDS");
                 console.log(((ct / time) * 1000).toLocaleString(), "Records Per Second (READ)");
                 return db.close();
             });

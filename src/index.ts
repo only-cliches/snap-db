@@ -1,8 +1,9 @@
 import * as path from "path";
 import { fork, ChildProcess } from "child_process";
 import { VERSION, fileName as fNameFN } from "./common";
-import { ReallySmallEvents } from "really-small-events";
+import { ReallySmallEvents } from "./rse";
 import * as fs from "fs";
+
 
 const messageBuffer: {
     [messageId: string]: (values: string[]) => void;
@@ -35,6 +36,7 @@ export class SnapDB<K> {
     private _hasEvents: boolean = false;
     public isCompacting: boolean = false;
     public isTx: boolean = false;
+    public clearCompactFiles: number[] = [];
 
     /**
      * Creates an instance of SnapDB.
@@ -55,7 +57,7 @@ export class SnapDB<K> {
 
         this._worker = fork(path.join(__dirname, "database.js"));
         this._compactor = fork(path.join(__dirname, "compact.js"));
-        let clearCompactFiles: number[] = [];
+        this.clearCompactFiles = [];
 
         this._worker.on("message", (msg) => { // got message from worker
             switch (msg.type) {
@@ -70,7 +72,7 @@ export class SnapDB<K> {
                 case "snap-compact-done":
                     this.isCompacting = false;
                     // safe to remove old files now
-                    clearCompactFiles.forEach((fileID) => {
+                    this.clearCompactFiles.forEach((fileID) => {
                         try {
                             fs.unlinkSync(path.join(this._path, fNameFN(fileID) + ".dta"));
                             fs.unlinkSync(path.join(this._path, fNameFN(fileID) + ".idx"));
@@ -79,7 +81,7 @@ export class SnapDB<K> {
 
                         }
                     });
-                    clearCompactFiles = [];
+                    this.clearCompactFiles = [];
                     if (this._hasEvents) this._rse.trigger("compact-end", {target: this, time: Date.now()});
                     break;
                 case "snap-res":
@@ -119,7 +121,7 @@ export class SnapDB<K> {
         });
         this._compactor.on("message", (msg) => {
             if (msg.type === "compact-done") {
-                clearCompactFiles = msg.files;
+                this.clearCompactFiles = msg.files;
                 this._worker.send({type: "compact-done"});
             }
         });
@@ -262,7 +264,13 @@ export class SnapDB<K> {
                 }
             }
 
-            this._worker.send({ type: "snap-put", key: key, value: data, id: msgId });
+            const parseKey = {
+                "string": (k) => String(k),
+                "float": (k) => isNaN(k) || k === null ? 0 : parseFloat(k),
+                "int":  (k) => isNaN(k) || k === null ? 0 : parseInt(k)
+            };
+
+            this._worker.send({ type: "snap-put", key: parseKey[this.keyType](key), value: data, id: msgId });
         });
     }
 
@@ -540,7 +548,8 @@ export class SnapDB<K> {
             // spin up new compactor thread
             this._compactor = fork(path.join(__dirname, "compact.js"));
             this._compactor.on("message", (msg) => {
-                if (msg === "compcact-done") {
+                if (msg.type === "compact-done") {
+                    this.clearCompactFiles = msg.files;
                     this._worker.send({type: "compact-done"});
                 }
             });
@@ -564,9 +573,11 @@ function makeid() {
     return text;
 }
 
-const db = new SnapDB<number>("my-db-test", "int", true);
+
+const db = new SnapDB<number>("my-db-test", "int", false);
+console.time("READY");
 db.ready().then(() => {
-    console.log("READY");
+    console.timeEnd("READY");
 
     let arr: any[] = [];
     let count = 100000;
@@ -590,6 +601,7 @@ db.ready().then(() => {
             }
             const time = (Date.now() - start);
             db.getCount().then((ct) => {
+                console.log(ct, "RECORDS");
                 console.log(((ct / time) * 1000).toLocaleString(), "Records Per Second (READ)");
                 return db.close();
             });

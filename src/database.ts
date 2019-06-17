@@ -4,6 +4,7 @@ import * as path from "path";
 import * as crypto from "crypto";
 import { SnapManifest, writeManifestUpdate, fileName, VERSION, throttle, SnapIndex, NULLBYTE, tableGenerator } from "./common";
 import { BloomFilter, MurmurHash3, IbloomFilterObj } from "./bloom";
+import { createRBTree, RedBlackTree } from "./rbtree";
 
 class SnapDatabase {
 
@@ -11,14 +12,8 @@ class SnapDatabase {
         [key: string]: string;
     } = {};
 
-    public _indexNum: number;
-    public _dbNum: number;
-    private _mod: any;
 
-    private _memTable: {
-        [key: string]: any;
-    } = {};
-    private _memTableIndex: number;
+    private _memTable: RedBlackTree = createRBTree();
 
     private _memTableSize: number = 0;
 
@@ -47,6 +42,8 @@ class SnapDatabase {
         [fileNum: number]: { cache: SnapIndex, lastUsed: number }
     } = {};
 
+    private _index: RedBlackTree = createRBTree();
+
     private _indexCacheClear = throttle(this, () => {
         Object.keys(this._indexFileCache).forEach((fileNum) => {
             const cache: { cache: SnapIndex, lastUsed: number } = this._indexFileCache[fileNum];
@@ -62,22 +59,11 @@ class SnapDatabase {
         public keyType: string,
         public memoryCache: boolean
     ) {
-        this._mod = wasm;
-        const checkLoaded = () => {
-            if (this._mod.loaded) {
-                this._checkForMigration();
-            } else {
-                setTimeout(checkLoaded, 10);
-            }
-        }
-        checkLoaded();
+        this._checkForMigration();
     }
 
     private _getFiles() {
         try {
-            const wasmFNs = { "string": this._mod.new_index_str, "int": this._mod.new_index_int, "float": this._mod.new_index };
-            this._indexNum = wasmFNs[this.keyType]();
-            this._memTableIndex = wasmFNs[this.keyType]();
 
             if (!fs.existsSync(this._path)) {
                 fs.mkdirSync(this._path);
@@ -118,8 +104,7 @@ class SnapDatabase {
 
     private _del(key: any, skiplog?: boolean) {
 
-        const wasmFNs2 = { "string": this._mod.del_key_str, "int": this._mod.del_key_int, "float": this._mod.del_key };
-        wasmFNs2[this.keyType](this._indexNum, key);
+        this._index = this._index.remove(key);
 
         const keyLen = String(key).length;
 
@@ -132,7 +117,7 @@ class SnapDatabase {
             }
         }
 
-        this._memTable[key] = NULLBYTE;
+        this._memTable = this._memTable.insert(key, NULLBYTE);
         this._memTableSize += keyLen;
         delete this._cache[key];
 
@@ -142,8 +127,7 @@ class SnapDatabase {
     private _put(key: any, value: string, skiplog?: boolean) {
 
         // write key to index
-        const wasmFNs = { "string": this._mod.add_to_index_str, "int": this._mod.add_to_index_int, "float": this._mod.add_to_index };
-        wasmFNs[this.keyType](this._indexNum, key);
+        this._index = this._index.insert(key, "");
 
         if (this.memoryCache) {
             this._cache[key] = value;
@@ -166,13 +150,12 @@ class SnapDatabase {
         }
 
         // mark key in memtable
-        this._memTable[key] = valueStr;
-        wasmFNs[this.keyType](this._memTableIndex, key);
+        this._memTable = this._memTable.insert(key, value);
         this._memTableSize += keyStr.length;
         this._memTableSize += valueStr.length;
 
         if (this.memoryCache) {
-            this._cache[key] = this._memTable[key];
+            this._cache[key] = value;
         }
 
         if (!skiplog) this._maybeFlushLog();
@@ -200,11 +183,12 @@ class SnapDatabase {
         }
 
         // check memtable
-        if (this._memTable[key]) {
-            if (this._memTable[key] === NULLBYTE) { // tombstone
+        const memValue = this._memTable.get(key);
+        if (typeof memValue !== "undefined") {
+            if (memValue === NULLBYTE) { // tombstone
                 throw new Error("Key not found!");
             }
-            return this._memTable[key];
+            return memValue;
         }
 
         // find latest key entry on disk
@@ -274,16 +258,14 @@ class SnapDatabase {
         // flush log & memtable at 2 megabytes
         if (this._memTableSize > 2000000) {
 
-            tableGenerator(0, this._manifestData, this._memTable, this.keyType, this._path, this._memTableIndex);
+            tableGenerator(0, this._manifestData, this.keyType, this._path, this._memTable);
 
             // update manifest to disk
             writeManifestUpdate(this._path, this._manifestData);
 
             // empty memtable
-            this._memTable = {};
+            this._memTable = createRBTree();
             this._memTableSize = 0;
-            const wasmClearFns = { "string": this._mod.empty_index_str, "int": this._mod.empty_index_int, "float": this._mod.empty_index };
-            wasmClearFns[this.keyType](this._memTableIndex);
 
             // empty logfile
             fs.closeSync(this._logHandle);
@@ -310,40 +292,47 @@ class SnapDatabase {
         if (fs.existsSync(this._path) && !fs.lstatSync(this._path).isDirectory()) {
             console.log("Attempting to migrate from SQLite backend..");
             console.log("If this process doesn't complete remove the '-old' from your SQLite database file and try again");
-            try {
-                fs.renameSync(this._path, this._path + "-old");
-                this._getFiles();
-                // SQLite database (old format)
-                // Read SQLite data and copy it to new format, then delete it
-                const dbData = this._mod.database_create(this._path + "-old", { "float": 0, "string": 1, "int": 2 }[this.keyType]);
-                if (!dbData) {
-                    throw new Error("Unable to connect to database at " + this._path + "-old");
-                }
-                this._indexNum = parseInt(dbData.split(",")[1]);
-                this._dbNum = parseInt(dbData.split(",")[0]);
-                const getAllFNS = { "string": this._mod.read_index_str, "int": this._mod.read_index_int, "float": this._mod.read_index };
-                const getALLFNS2 = { "string": this._mod.read_index_str_next, "int": this._mod.read_index_int_next, "float": this._mod.read_index_next };
+            const loadWASM = () => {
+                if (wasm.loaded) {
+                    try {
+                        fs.renameSync(this._path, this._path + "-old");
+                        this._getFiles();
+                        // SQLite database (old format)
+                        // Read SQLite data and copy it to new format, then delete it
+                        const dbData = wasm.database_create(this._path + "-old", { "float": 0, "string": 1, "int": 2 }[this.keyType]);
+                        if (!dbData) {
+                            throw new Error("Unable to connect to database at " + this._path + "-old");
+                        }
+                        const indexNum = parseInt(dbData.split(",")[1]);
+                        const dbNum = parseInt(dbData.split(",")[0]);
+                        const getAllFNS = { "string": wasm.read_index_str, "int": wasm.read_index_int, "float": wasm.read_index };
+                        const getALLFNS2 = { "string": wasm.read_index_str_next, "int": wasm.read_index_int_next, "float": wasm.read_index_next };
 
-                let itALL = getAllFNS[this.keyType](this._indexNum, 0);
-                if (!itALL) {
-                    this._listenForCommands();
-                    return;
-                }
-                itALL = itALL.split(",").map(s => parseInt(s));
-                let nextKeyALL: any;
-                let countALL = 0;
+                        let itALL = getAllFNS[this.keyType](indexNum, 0);
+                        if (!itALL) {
+                            this._listenForCommands();
+                            return;
+                        }
+                        itALL = itALL.split(",").map(s => parseInt(s));
+                        let nextKeyALL: any;
+                        let countALL = 0;
 
-                while (countALL < itALL[1]) {
-                    nextKeyALL = getALLFNS2[this.keyType](this._indexNum, itALL[0], 0, countALL);
-                    this._put(nextKeyALL, this._mod.database_get(this._dbNum, String(nextKeyALL)));
-                    countALL++;
+                        while (countALL < itALL[1]) {
+                            nextKeyALL = getALLFNS2[this.keyType](indexNum, itALL[0], 0, countALL);
+                            this._put(nextKeyALL, wasm.database_get(dbNum, String(nextKeyALL)));
+                            countALL++;
+                        }
+                        console.log("SQLite migration completed.");
+                        this._listenForCommands();
+                    } catch (e) {
+                        console.error("Problem migrating from SQLite database!");
+                        console.error(e);
+                    }
+                } else {
+                    setTimeout(loadWASM, 100);
                 }
-                console.log("SQLite migration completed.");
-                this._listenForCommands();
-            } catch (e) {
-                console.error("Problem migrating from SQLite database!");
-                console.error(e);
             }
+            loadWASM();
         } else {
             this._getFiles();
             this._listenForCommands();
@@ -398,28 +387,24 @@ class SnapDatabase {
                     break;
                 case "snap-get-all-keys":
 
-                    const wasmFNs3 = { "string": this._mod.read_index_str, "int": this._mod.read_index_int, "float": this._mod.read_index };
-                    const wasmFNs4 = { "string": this._mod.read_index_str_next, "int": this._mod.read_index_int_next, "float": this._mod.read_index_next };
-
-                    const it = wasmFNs3[this.keyType](this._indexNum, msg.reverse ? 1 : 0).split(",").map(s => parseInt(s));
-                    if (!it) {
+                    const it = msg.reverse ? this._index.end() : this._index.begin()
+                    if (!this._index.length()) {
                         if (process.send) process.send({ type: "snap-res-done", id: msg.id, data: [] })
                         return;
                     }
-                    let nextKey: any = 0;
-                    let count = 0;
 
-                    while (count < it[1]) {
-                        nextKey = wasmFNs4[this.keyType](this._indexNum, it[0], msg.reverse ? 1 : 0, count);
-                        if (process.send) process.send({ type: "snap-res", event: "get-keys", id: msg.id, data: ["response", nextKey] })
-                        count++;
+                    while (it.valid()) {
+                        if (process.send) process.send({ type: "snap-res", event: "get-keys", id: msg.id, data: ["response", it.key()] })
+                        if (msg.reverse) {
+                            it.prev();
+                        } else {
+                            it.next();
+                        }
                     }
                     if (process.send) process.send({ type: "snap-res-done", event: "get-keys-end", id: msg.id, data: [] })
-
                     break;
                 case "snap-count":
-                    const wasmCountFns = { "string": this._mod.get_total_str, "int": this._mod.get_total_int, "float": this._mod.get_total };
-                    if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "get-count", data: [undefined, wasmCountFns[this.keyType](this._indexNum)] })
+                    if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "get-count", data: [undefined, this._index.length()] })
                     break;
                 case "snap-start-tx":
                     if (this._doingTx === true) {
@@ -447,70 +432,83 @@ class SnapDatabase {
                     if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "tx-end", data: [undefined, this._txNum] });
                     break;
                 case "snap-get-all":
-                    const getAllFNS = { "string": this._mod.read_index_str, "int": this._mod.read_index_int, "float": this._mod.read_index };
-                    const getALLFNS2 = { "string": this._mod.read_index_str_next, "int": this._mod.read_index_int_next, "float": this._mod.read_index_next };
 
-                    let itALL = getAllFNS[this.keyType](this._indexNum, msg.reverse ? 1 : 0)
-                    if (!itALL) {
+                    const itALL = msg.reverse ? this._index.end() : this._index.begin();
+                    if (!this._index.length()) {
                         if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "get-all-end", data: [] })
                         return;
                     }
-                    itALL = itALL.split(",").map(s => parseInt(s));
-                    let nextKeyALL: any;
-                    let countALL = 0;
 
-                    while (countALL < itALL[1]) {
-                        nextKeyALL = getALLFNS2[this.keyType](this._indexNum, itALL[0], msg.reverse ? 1 : 0, countALL);
-                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-all", data: ["response", nextKeyALL, this._get(nextKeyALL)] })
-                        countALL++;
+                    while (itALL.valid()) {
+                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-all", data: ["response", itALL.key(), this._get(itALL.key())] })
+                        if (msg.reverse) {
+                            itALL.prev();
+                        } else {
+                            itALL.next();
+                        }
                     }
                     if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "get-all-end", data: [] })
                     break;
                 case "snap-get-offset":
-                    const offsetWasmFN = { "string": this._mod.read_index_offset_str, "int": this._mod.read_index_offset_int, "float": this._mod.read_index_offset };
-                    const offsetWasmFN2 = { "string": this._mod.read_index_offset_str_next, "int": this._mod.read_index_offset_int_next, "float": this._mod.read_index_offset_next };
 
-                    const offsetIT = offsetWasmFN[this.keyType](this._indexNum, msg.reverse ? 1 : 0, msg.offset);
-                    if (offsetIT === 0) {
+                    const offsetIT = msg.reverse ? this._index.end() : this._index.begin();
+
+                    if (!this._index.length()) {
                         if (process.send) process.send({ type: "snap-res-done", event: "get-offset-end", id: msg.id, data: [] })
                         return;
                     }
-                    let nextKeyOffset: any = 0;
-                    let countOffset = 0;
 
-                    while (countOffset < msg.limit) {
-                        nextKeyOffset = offsetWasmFN2[this.keyType](this._indexNum, offsetIT, msg.reverse ? 1 : 0, msg.limit, countOffset);
-                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-offset", data: ["response", nextKeyOffset, this._get(nextKeyOffset)] })
-                        countOffset++;
+                    let i = msg.offset || 0;
+                    while (i--) {
+                        if (msg.reverse) {
+                            offsetIT.prev();
+                        } else {
+                            offsetIT.next();
+                        }
+                    }
+
+                    i = 0;
+
+                    while (i < msg.limit && offsetIT.valid()) {
+                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-offset", data: ["response", offsetIT.key(), this._get(offsetIT.key())] });
+                        if (msg.reverse) {
+                            offsetIT.prev();
+                        } else {
+                            offsetIT.next();
+                        }
+                        i++;
                     }
                     if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "get-offset-end", data: [] })
                     break;
                 case "snap-get-range":
-                    const wasmFNsRange = { "string": this._mod.read_index_range_str, "int": this._mod.read_index_range_int, "float": this._mod.read_index_range };
-                    const wasmFNsRange2 = { "string": this._mod.read_index_range_str_next, "int": this._mod.read_index_range_int_next, "float": this._mod.read_index_range_next };
 
-                    let rangeIT = wasmFNsRange[this.keyType](this._indexNum, msg.lower, msg.higher, msg.reverse ? 1 : 0);
-                    if (!rangeIT) {
+                    const rangeIT = msg.reverse ? this._index.le(msg.higher) : this._index.ge(msg.lower);
+
+                    if (!this._index.length()) {
                         if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "get-range-end", data: [] })
                         return;
                     }
-                    rangeIT = rangeIT.split(",").map(s => parseInt(s));
 
-                    let nextKeyRange: any;
-                    let countRange = 0;
+                    let nextKey = rangeIT.key();
 
-                    while (countRange < rangeIT[1]) {
-                        nextKeyRange = wasmFNsRange2[this.keyType](this._indexNum, rangeIT[0], msg.reverse ? 1 : 0, countRange);
-                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-range", data: ["response", nextKeyRange, this._get(nextKeyRange)] })
-                        countRange++;
+                    while (rangeIT.valid() && msg.reverse ? nextKey >= msg.lower : nextKey <= msg.higher) {
+                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-range", data: ["response", nextKey, this._get(nextKey)] })
+
+                        if (msg.reverse) {
+                            rangeIT.prev();
+                        } else {
+                            rangeIT.next();
+                        }
+                        nextKey = rangeIT.key();
                     }
                     if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "get-range-end", data: [] })
 
                     break;
                 case "snap-close":
-                    const wasmDelFns = { "string": this._mod.empty_index_str, "int": this._mod.empty_index_int, "float": this._mod.empty_index };
+
                     // clear index
-                    wasmDelFns[this.keyType](this._indexNum);
+                    this._index = createRBTree();
+                    this._memTable = createRBTree();
 
                     // close log file
                     fs.closeSync(this._logHandle);
@@ -522,9 +520,12 @@ class SnapDatabase {
                     break;
                 case "snap-clear":
                     this._isCompacting = true;
-                    const wasmClearFns = { "string": this._mod.empty_index_str, "int": this._mod.empty_index_int, "float": this._mod.empty_index };
-                    // clear index
-                    wasmClearFns[this.keyType](this._indexNum);
+
+                    this._index = createRBTree();
+                    this._memTable = createRBTree();
+                    this._memTableSize = 0;
+
+                    fs.closeSync(this._logHandle);
 
                     // clear database
 
@@ -539,7 +540,7 @@ class SnapDatabase {
                         }
                     });
 
-                    // setup new manifest
+                    // setup new manifest and log
                     this._getFiles();
 
                     if (process.send) process.send({ type: "snap-clear-done", id: msg.id, data: [] })
@@ -562,23 +563,17 @@ class SnapDatabase {
      */
     private _loadCache() {
 
-        const wasmFNs = { "string": this._mod.get_total_str, "int": this._mod.get_total_int, "float": this._mod.get_total };
-        const total = wasmFNs[this.keyType](this._indexNum);
+        const total = this._index.length();
 
         if (total === 0 || !this.memoryCache) {
             return;
         }
-        const getAllFNS = { "string": this._mod.read_index_str, "int": this._mod.read_index_int, "float": this._mod.read_index };
-        const getALLFNS2 = { "string": this._mod.read_index_str_next, "int": this._mod.read_index_int_next, "float": this._mod.read_index_next };
 
-        const itALL = getAllFNS[this.keyType](this._indexNum, 0).split(",").map(s => parseInt(s));
-        let nextKeyALL: any = 0;
-        let countALL = 0;
+        const it = this._index.begin();
 
-        while (countALL < itALL[1]) {
-            nextKeyALL = getALLFNS2[this.keyType](this._indexNum, itALL[0], 0, countALL);
-            this._cache[nextKeyALL] = this._get(nextKeyALL, true);
-            countALL++;
+        while (it.hasNext()) {
+            this._cache[it.key()] = this._get(it.key(), true);
+            it.next();
         }
     }
 
@@ -746,14 +741,16 @@ class SnapDatabase {
                             const index: SnapIndex = JSON.parse(content);
                             const keys = Object.keys(index.keys);
                             let i = keys.length;
-                            while(i--) {
+                            while (i--) {
                                 const key = this.keyType === "string" ? keys[i] : parseFloat(keys[i]);
                                 if (index.keys[keys[i]][0] === -1) { // delete
-                                    const wasmFNs2 = { "string": this._mod.del_key_str, "int": this._mod.del_key_int, "float": this._mod.del_key };
-                                    wasmFNs2[this.keyType](this._indexNum, key);
+                                    this._index = this._index.remove(key);
+                                    //const wasmFNs2 = { "string": this._mod.del_key_str, "int": this._mod.del_key_int, "float": this._mod.del_key };
+                                    //wasmFNs2[this.keyType](this._indexNum, key);
                                 } else { // add
-                                    const wasmFNs = { "string": this._mod.add_to_index_str, "int": this._mod.add_to_index_int, "float": this._mod.add_to_index };
-                                    wasmFNs[this.keyType](this._indexNum, key);
+                                    this._index = this._index.insert(key, "");
+                                    //const wasmFNs = { "string": this._mod.add_to_index_str, "int": this._mod.add_to_index_int, "float": this._mod.add_to_index };
+                                    //wasmFNs[this.keyType](this._indexNum, key);
                                 }
                             }
                         }

@@ -1,3 +1,11 @@
+# TODO
+- Cluster support with support for parallel reads.
+
+# [1.0.5] 06-17-2019
+- Readme typo fix.
+- A few code adjustments.
+- Added intelligent tombstone purging.
+
 # [1.0.4] 06-17-2019
 - Resolved issue with SnapDB not working on Windows hosts.
 - Replaced SQLite with custom javascript LSM database.

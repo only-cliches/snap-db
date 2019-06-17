@@ -4,7 +4,7 @@ var path = require("path");
 var crypto = require("crypto");
 var bloom_1 = require("./bloom");
 var wasm = require("./db.js");
-exports.VERSION = 1.04;
+exports.VERSION = 1.05;
 exports.NULLBYTE = new Buffer([0]);
 ;
 exports.writeManifestUpdate = function (dbPath, manifest) {

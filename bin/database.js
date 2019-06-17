@@ -307,9 +307,8 @@ var SnapDatabase = /** @class */ (function () {
                             process.send({ type: "snap-res-done", id: msgId, event: "get", data: [undefined, _this._get(key)] });
                     }
                     catch (e) {
-                        console.error(e);
                         if (process.send)
-                            process.send({ type: "snap-res-done", id: msgId, event: "get", data: ["Unable to get key!", ""] });
+                            process.send({ type: "snap-res-done", id: msgId, event: "get", data: ["Unable to get key or key not found!", ""] });
                     }
                     break;
                 case "snap-del":

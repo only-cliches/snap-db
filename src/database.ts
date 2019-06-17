@@ -371,8 +371,7 @@ class SnapDatabase {
                     try {
                         if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "get", data: [undefined, this._get(key)] })
                     } catch (e) {
-                        console.error(e);
-                        if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "get", data: ["Unable to get key!", ""] })
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "get", data: ["Unable to get key or key not found!", ""] })
                     }
                     break;
                 case "snap-del":

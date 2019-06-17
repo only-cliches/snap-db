@@ -12,7 +12,7 @@ Get a running database in a snap!
   </a>
 </p>
 
-SnapDB is a pure javascript persistent key-value store that provides ordered mapping from keys to string values. Data is persisted to disk using a Log Structure Merge Tree (LSM) inspired by LevelDB/RocksDDB.
+SnapDB is a pure javascript persistent key-value store that provides ordered mapping from keys to string values. Data is persisted to disk using a Log Structure Merge Tree (LSM Tree) inspired by LevelDB / RocksDB.
 
 Uses synchronous filesystem methods to only perform append writes to disk, this puts the performance of SnapDB near the theoretical maximum write performance for ACID javascript databases.
 
@@ -62,7 +62,7 @@ db.ready().then(() => {
 
 ## API
 
-The `SnapDB` class accepts up to 3 arguments in the constructor.
+The `SnapDB` class accepts 3 arguments in the constructor.
 
 ### Class Arguments
 
@@ -80,8 +80,8 @@ The three `keyType`s correspond to different data types in WebAssembly.  Larger 
 
 | Type   | Bytes | Range                                | Details                                                                                                                                            |
 |--------|-------|--------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
-| int    | 4     | 0 - 4,294,967,295                    | The smallest and fastest index type.                                                                                                               |
-| float  | 8     | 1.7E +/- 308                         | Equivelant to `double` type in C/C++, use this if you need decimal numbers.                                                                                 |
+| int    | 4     | 0 - 4,294,967,295                    | Integer type, the smallest and fastest index type.                                        |
+| float  | 8     | 1.7E +/- 308                         | Equivalent to `double` type in C/C++, use this if you need decimal numbers.               |
 | string | 1+    |  Up to 1 billion characters long | Allows you to use almost any size string as a key, memory usage is the same as the length of the key. |
 
 
@@ -92,7 +92,7 @@ The three `keyType`s correspond to different data types in WebAssembly.  Larger 
 The current version of SnapDB being used.
 
 #### .isCompacting: boolean
-This is `true` when the database is performing compaction in the background, `false` otherwise. Compactions are performed in a separate thread from the database and the main application so should only affect write throughput.
+This is `true` when the database is performing compaction in the background, `false` otherwise. Compactions are performed in a separate thread so should only affect write throughput.
 
 #### .isTx: boolean
 This is `true` when a transaction is active, `false` otherwise.
@@ -154,11 +154,11 @@ You can listen for the following events:
 | get            | After a value is retrieved with `.get`.                     |
 | put            | After a value is set with `.put`.                           |
 | delete         | After a value is deleted with `.delete`.                    |
-| get-keys       | For every key when `getAllKeys` is called.                  |
-| get-keys-end   | After the end of a `getAllKeys` query.                      |
+| get-keys       | For every key when `.getAllKeys` is called.                 |
+| get-keys-end   | After the end of a `.getAllKeys` query.                     |
 | get-count      | After `.getCount` is query is returned.                     |
-| get-all        | For every key value pair returned when `getAll` is called.  |
-| get-all-end    | After the end of a `getAll` query.                          |
+| get-all        | For every key value pair returned when `.getAll` is called. |
+| get-all-end    | After the end of a `.getAll` query.                         |
 | get-offset     | For every key value pair returned when `.offset` is called. |
 | get-offset-end | After the end of a `.offset` query.                         |
 | get-range      | For every key value pair returned when `.range` is called.  |

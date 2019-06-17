@@ -1,5 +1,3 @@
-import * as crypto from "crypto";
-
 export interface IbloomFilterObj {
     vData: number[],
     nHashFuncs: number,

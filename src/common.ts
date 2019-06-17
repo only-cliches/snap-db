@@ -4,7 +4,7 @@ import * as crypto from "crypto";
 import { IbloomFilterObj, BloomFilter } from "./bloom";
 const wasm = require("./db.js");
 
-export const VERSION = 1.04;
+export const VERSION = 1.05;
 
 export const NULLBYTE = new Buffer([0]);
 

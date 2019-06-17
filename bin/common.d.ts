@@ -1,5 +1,5 @@
 /// <reference types="node" />
-export declare const VERSION = 1.04;
+export declare const VERSION = 1.05;
 export declare const NULLBYTE: Buffer;
 export interface SnapManifest {
     v: number;

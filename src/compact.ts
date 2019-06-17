@@ -115,7 +115,7 @@ export class SnapCompactor {
                     });
 
                     // write files to disk
-                    tableGenerator(1, this._manifestData, this.keyType, this.path, compactIndex);
+                    tableGenerator(1, this._manifestData, this.path, compactIndex);
 
                 } else { // level 1+, only merge some files
 
@@ -161,7 +161,7 @@ export class SnapCompactor {
                     });
 
                     // write files to disk
-                    tableGenerator(i + 1, this._manifestData, this.keyType, this.path, compactIndex);
+                    tableGenerator(i + 1, this._manifestData, this.path, compactIndex);
                 }
 
                 compactIndex = createRBTree();

@@ -61,7 +61,7 @@ export const throttle = (scope: any, func: any, limit: number) => {
     };
 };
 
-export const tableGenerator = (level: number, manifest: SnapManifest, keyType: string, dbPath: string, index: RedBlackTree) => {
+export const tableGenerator = (level: number, manifest: SnapManifest, dbPath: string, index: RedBlackTree) => {
     
     const it = index.begin();
 

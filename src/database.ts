@@ -173,6 +173,11 @@ class SnapDatabase {
     private _get(key: any, skipCache?: boolean): string {
         this._indexCacheClear();
 
+        // check if key is in index
+        if (this._index.get(key) === undefined) {
+            throw new Error("Key not found!");
+        }
+
         // check cache first
         if (this.memoryCache && !skipCache) {
             if (typeof this._cache[key] !== "undefined") {
@@ -194,8 +199,12 @@ class SnapDatabase {
         // find latest key entry on disk
         const strKey = String(key);
         let candidateFiles: number[] = [];
-        this._manifestData.lvl.forEach((lvl, i) => {
-            lvl.files.forEach((fileInfo) => {
+        let i = 0;
+        while (i < this._manifestData.lvl.length) {
+            const lvl = this._manifestData.lvl[i];
+            let k = 0;
+            while (k < lvl.files.length) {
+                const fileInfo = lvl.files[k];
                 if (i === 0) { // level 0, no range check
                     const bloom = this._getBloom(fileInfo.i);
                     if (BloomFilter.contains(bloom.vData, bloom.nHashFuncs, bloom.nTweak, strKey)) {
@@ -209,8 +218,10 @@ class SnapDatabase {
                         }
                     }
                 }
-            });
-        });
+                k++;
+            }
+            i++;
+        }
 
         // no candidates found, key doesn't exist
         if (candidateFiles.length === 0) {
@@ -258,7 +269,7 @@ class SnapDatabase {
         // flush log & memtable at 2 megabytes
         if (this._memTableSize > 2000000) {
 
-            tableGenerator(0, this._manifestData, this.keyType, this._path, this._memTable);
+            tableGenerator(0, this._manifestData, this._path, this._memTable);
 
             // update manifest to disk
             writeManifestUpdate(this._path, this._manifestData);
@@ -627,8 +638,6 @@ class SnapDatabase {
                 return [key, -1];
             }
 
-
-
             buffer = "";
             k = 0;
             while (k < valueLen && k < line.length) {
@@ -745,12 +754,8 @@ class SnapDatabase {
                                 const key = this.keyType === "string" ? keys[i] : parseFloat(keys[i]);
                                 if (index.keys[keys[i]][0] === -1) { // delete
                                     this._index = this._index.remove(key);
-                                    //const wasmFNs2 = { "string": this._mod.del_key_str, "int": this._mod.del_key_int, "float": this._mod.del_key };
-                                    //wasmFNs2[this.keyType](this._indexNum, key);
                                 } else { // add
                                     this._index = this._index.insert(key, "");
-                                    //const wasmFNs = { "string": this._mod.add_to_index_str, "int": this._mod.add_to_index_int, "float": this._mod.add_to_index };
-                                    //wasmFNs[this.keyType](this._indexNum, key);
                                 }
                             }
                         }

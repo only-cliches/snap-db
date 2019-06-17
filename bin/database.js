@@ -2,12 +2,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 var wasm = require("./db.js");
 var fs = require("fs");
 var path = require("path");
-var crypto = require("crypto");
 var common_1 = require("./common");
 var bloom_1 = require("./bloom");
-var NULLBYTE = new Buffer([0]);
-var SnapWorker = /** @class */ (function () {
-    function SnapWorker(_path, keyType, memoryCache) {
+var SnapDatabase = /** @class */ (function () {
+    function SnapDatabase(_path, keyType, memoryCache) {
         var _this = this;
         this._path = _path;
         this.keyType = keyType;
@@ -24,6 +22,7 @@ var SnapWorker = /** @class */ (function () {
         this._isCompacting = false;
         this._isConnecting = false;
         this._txNum = Math.round(Math.random() * 256);
+        this._bloomCache = {};
         this._indexFileCache = {};
         this._indexCacheClear = common_1.throttle(this, function () {
             Object.keys(_this._indexFileCache).forEach(function (fileNum) {
@@ -45,7 +44,7 @@ var SnapWorker = /** @class */ (function () {
         };
         checkLoaded();
     }
-    SnapWorker.prototype._getFiles = function () {
+    SnapDatabase.prototype._getFiles = function () {
         try {
             var wasmFNs = { "string": this._mod.new_index_str, "int": this._mod.new_index_int, "float": this._mod.new_index };
             this._indexNum = wasmFNs[this.keyType]();
@@ -67,10 +66,9 @@ var SnapWorker = /** @class */ (function () {
                 fs.unlinkSync(path.join(this._path, "manifest-temp.json"));
             }
             else {
-                // create the manifest file if it's not there.
-                fs.openSync(path.join(this._path, "manifest.json"), "w+");
-                // read from the manifest file
-                this._manifestData = JSON.parse((fs.readFileSync(path.join(this._path, "manifest.json")) || new Buffer([])).toString("utf-8") || '{"inc": 0, "lvl": []}');
+                if (fs.existsSync(path.join(this._path, "manifest.json"))) {
+                    this._manifestData = JSON.parse(fs.readFileSync(path.join(this._path, "manifest.json")).toString("utf-8"));
+                }
             }
             this._manifestData.v = common_1.VERSION;
             common_1.writeManifestUpdate(this._path, this._manifestData);
@@ -81,24 +79,24 @@ var SnapWorker = /** @class */ (function () {
             console.error(e);
         }
     };
-    SnapWorker.prototype._del = function (key, skiplog) {
+    SnapDatabase.prototype._del = function (key, skiplog) {
         var wasmFNs2 = { "string": this._mod.del_key_str, "int": this._mod.del_key_int, "float": this._mod.del_key };
         wasmFNs2[this.keyType](this._indexNum, key);
         var keyLen = String(key).length;
         if (!skiplog) {
-            fs.writeSync(this._logHandle, NULLBYTE);
+            fs.writeSync(this._logHandle, common_1.NULLBYTE);
             fs.writeSync(this._logHandle, keyLen + ",-1," + String(key));
             // flush to disk
             if (!this._doingTx) {
                 fs.fsyncSync(this._logHandle);
             }
         }
-        this._memTable[key] = SnapWorker.tomb;
+        this._memTable[key] = common_1.NULLBYTE;
         this._memTableSize += keyLen;
         delete this._cache[key];
         this._maybeFlushLog();
     };
-    SnapWorker.prototype._put = function (key, value, skiplog) {
+    SnapDatabase.prototype._put = function (key, value, skiplog) {
         // write key to index
         var wasmFNs = { "string": this._mod.add_to_index_str, "int": this._mod.add_to_index_int, "float": this._mod.add_to_index };
         wasmFNs[this.keyType](this._indexNum, key);
@@ -109,7 +107,7 @@ var SnapWorker = /** @class */ (function () {
         var valueStr = String(value);
         if (!skiplog) {
             // write key & value to log
-            fs.writeSync(this._logHandle, NULLBYTE);
+            fs.writeSync(this._logHandle, common_1.NULLBYTE);
             fs.writeSync(this._logHandle, keyStr.length + "," + valueStr.length + "," + keyStr + valueStr);
             fs.writeSync(this._logHandle, bloom_1.MurmurHash3(0, keyStr + valueStr)); // data checksum
         }
@@ -128,10 +126,18 @@ var SnapWorker = /** @class */ (function () {
         if (!skiplog)
             this._maybeFlushLog();
     };
-    SnapWorker.prototype._get = function (key) {
+    SnapDatabase.prototype._getBloom = function (fileID) {
+        if (this._bloomCache[fileID]) {
+            return this._bloomCache[fileID];
+        }
+        this._bloomCache[fileID] = JSON.parse(fs.readFileSync(path.join(this._path, common_1.fileName(fileID) + ".bom"), "utf-8"));
+        return this._bloomCache[fileID];
+    };
+    SnapDatabase.prototype._get = function (key, skipCache) {
+        var _this = this;
         this._indexCacheClear();
         // check cache first
-        if (this.memoryCache) {
+        if (this.memoryCache && !skipCache) {
             if (typeof this._cache[key] !== "undefined") {
                 return this._cache[key];
             }
@@ -141,7 +147,7 @@ var SnapWorker = /** @class */ (function () {
         }
         // check memtable
         if (this._memTable[key]) {
-            if (this._memTable[key] === SnapWorker.tomb) {
+            if (this._memTable[key] === common_1.NULLBYTE) { // tombstone
                 throw new Error("Key not found!");
             }
             return this._memTable[key];
@@ -152,13 +158,15 @@ var SnapWorker = /** @class */ (function () {
         this._manifestData.lvl.forEach(function (lvl, i) {
             lvl.files.forEach(function (fileInfo) {
                 if (i === 0) { // level 0, no range check
-                    if (bloom_1.BloomFilter.contains(fileInfo.bloom.vData, fileInfo.bloom.nHashFuncs, fileInfo.bloom.nTweak, strKey)) {
+                    var bloom = _this._getBloom(fileInfo.i);
+                    if (bloom_1.BloomFilter.contains(bloom.vData, bloom.nHashFuncs, bloom.nTweak, strKey)) {
                         candidateFiles.push(fileInfo.i);
                     }
                 }
                 else { // level 1+, do range check then bloom filter
-                    if (fileInfo.range[0] >= key && fileInfo.range[1] <= key) {
-                        if (bloom_1.BloomFilter.contains(fileInfo.bloom.vData, fileInfo.bloom.nHashFuncs, fileInfo.bloom.nTweak, strKey)) {
+                    if (fileInfo.range[0] <= key && fileInfo.range[1] >= key) {
+                        var bloom = _this._getBloom(fileInfo.i);
+                        if (bloom_1.BloomFilter.contains(bloom.vData, bloom.nHashFuncs, bloom.nTweak, strKey)) {
                             candidateFiles.push(fileInfo.i);
                         }
                     }
@@ -181,7 +189,7 @@ var SnapWorker = /** @class */ (function () {
             else {
                 this._indexFileCache[fileID] = { cache: index, lastUsed: Date.now() };
             }
-            if (typeof index.keys[strKey] !== "undefined") {
+            if (typeof index.keys[strKey] !== "undefined") { // bloom filter miss if undefined
                 var dataStart = index.keys[strKey][0];
                 var dataLength = index.keys[strKey][1];
                 if (dataStart === -1) { // tombstone found
@@ -190,6 +198,7 @@ var SnapWorker = /** @class */ (function () {
                 var fd = fs.openSync(path.join(this._path, common_1.fileName(fileID) + ".dta"), "r");
                 var buff = new Buffer(dataLength);
                 fs.readSync(fd, buff, 0, dataLength, dataStart);
+                fs.closeSync(fd);
                 return buff.toString("utf-8");
             }
             fileIdx++;
@@ -197,76 +206,14 @@ var SnapWorker = /** @class */ (function () {
         ;
         throw new Error("Key not found!");
     };
-    SnapWorker.prototype._maybeFlushLog = function () {
+    SnapDatabase.prototype._maybeFlushLog = function () {
         if (this._doingTx || this._isCompacting) {
             return;
         }
-        // flush at 4 megabytes 4000000
-        if (this._memTableSize > 200) {
-            var nextFile = this._manifestData.inc + 1;
-            var wasmFNs3 = { "string": this._mod.read_index_str, "int": this._mod.read_index_int, "float": this._mod.read_index };
-            var wasmFNs4 = { "string": this._mod.read_index_str_next, "int": this._mod.read_index_int_next, "float": this._mod.read_index_next };
-            var it_1 = wasmFNs3[this.keyType](this._memTableIndex, 0).split(",").map(function (s) { return parseInt(s); });
-            var key = void 0;
-            var count = 0;
-            var bloom = bloom_1.BloomFilter.create(it_1[1], 0.1);
-            try {
-                // remove possible partial files from previous run
-                fs.unlinkSync(common_1.fileName(nextFile) + ".idx");
-                fs.unlinkSync(common_1.fileName(nextFile) + ".dta");
-            }
-            catch (e) {
-                // no need to catch this error or care about it, happens if files don't exist.
-            }
-            var levelFileIdx = fs.openSync(path.join(this._path, common_1.fileName(nextFile) + ".idx"), "a+");
-            var levelFileDta = fs.openSync(path.join(this._path, common_1.fileName(nextFile) + ".dta"), "a+");
-            var dataLen = 0;
-            var dataHash = crypto.createHash("sha1");
-            var keyHash = crypto.createHash("sha1");
-            var indexJSON = {
-                keys: {},
-                hash: ""
-            };
-            while (count < it_1[1]) {
-                key = wasmFNs4[this.keyType](this._memTableIndex, it_1[0], 0, count);
-                var strKey = String(key);
-                var data = this._memTable[key];
-                if (data === SnapWorker.tomb) { // tombstone
-                    // write index
-                    indexJSON.keys[key] = [-1, 0]; // tombstone
-                    bloom.insert(strKey);
-                }
-                else {
-                    // write index
-                    indexJSON.keys[key] = [dataLen, data.length];
-                    bloom.insert(strKey);
-                    // write data
-                    fs.writeSync(levelFileDta, data);
-                    dataHash.update(data);
-                    dataLen += data.length;
-                }
-                count++;
-            }
-            // checksums for integrity
-            fs.writeSync(levelFileDta, NULLBYTE);
-            fs.writeSync(levelFileDta, NULLBYTE);
-            fs.writeSync(levelFileDta, dataHash.digest("base64"));
-            indexJSON.hash = keyHash.update(JSON.stringify(indexJSON.keys)).digest("base64");
-            fs.writeSync(levelFileIdx, JSON.stringify(indexJSON));
-            // flush to disk
-            fs.fsyncSync(levelFileDta);
-            fs.fsyncSync(levelFileIdx);
-            fs.closeSync(levelFileDta);
-            fs.closeSync(levelFileIdx);
-            // update manifest
-            if (!this._manifestData.lvl[0]) {
-                this._manifestData.lvl[0] = {
-                    comp: 0,
-                    files: []
-                };
-            }
-            this._manifestData.lvl[0].files.push({ i: nextFile, range: [0, 0], bloom: bloom.toObject() });
-            this._manifestData.inc = nextFile;
+        // flush log & memtable at 2 megabytes
+        if (this._memTableSize > 2000000) {
+            common_1.tableGenerator(0, this._manifestData, this._memTable, this.keyType, this._path, this._memTableIndex);
+            // update manifest to disk
             common_1.writeManifestUpdate(this._path, this._manifestData);
             // empty memtable
             this._memTable = {};
@@ -280,7 +227,7 @@ var SnapWorker = /** @class */ (function () {
             this._maybeCompact();
         }
     };
-    SnapWorker.prototype._maybeCompact = function () {
+    SnapDatabase.prototype._maybeCompact = function () {
         this._isCompacting = true;
         if (process.send)
             process.send({ type: "snap-compact" });
@@ -292,9 +239,9 @@ var SnapWorker = /** @class */ (function () {
      * @returns
      * @memberof SnapWorker
      */
-    SnapWorker.prototype._checkForMigration = function () {
+    SnapDatabase.prototype._checkForMigration = function () {
         if (fs.existsSync(this._path) && !fs.lstatSync(this._path).isDirectory()) {
-            console.log("Attempting to migrate from SQLite database...");
+            console.log("Attempting to migrate from SQLite backend..");
             console.log("If this process doesn't complete remove the '-old' from your SQLite database file and try again");
             try {
                 fs.renameSync(this._path, this._path + "-old");
@@ -311,7 +258,7 @@ var SnapWorker = /** @class */ (function () {
                 var getALLFNS2 = { "string": this._mod.read_index_str_next, "int": this._mod.read_index_int_next, "float": this._mod.read_index_next };
                 var itALL = getAllFNS[this.keyType](this._indexNum, 0);
                 if (!itALL) {
-                    this._ready();
+                    this._listenForCommands();
                     return;
                 }
                 itALL = itALL.split(",").map(function (s) { return parseInt(s); });
@@ -323,7 +270,7 @@ var SnapWorker = /** @class */ (function () {
                     countALL++;
                 }
                 console.log("SQLite migration completed.");
-                this._ready();
+                this._listenForCommands();
             }
             catch (e) {
                 console.error("Problem migrating from SQLite database!");
@@ -332,10 +279,10 @@ var SnapWorker = /** @class */ (function () {
         }
         else {
             this._getFiles();
-            this._ready();
+            this._listenForCommands();
         }
     };
-    SnapWorker.prototype._ready = function () {
+    SnapDatabase.prototype._listenForCommands = function () {
         var _this = this;
         process.on('message', function (msg) {
             var key = msg.key;
@@ -344,6 +291,8 @@ var SnapWorker = /** @class */ (function () {
                 case "compact-done":
                     _this._isCompacting = false;
                     _this._manifestData = JSON.parse((fs.readFileSync(path.join(_this._path, "manifest.json")) || new Buffer([])).toString("utf-8"));
+                    _this._bloomCache = {};
+                    _this._indexFileCache = {};
                     if (process.send)
                         process.send({ type: "snap-compact-done", id: msgId });
                     if (_this._isConnecting) {
@@ -393,16 +342,16 @@ var SnapWorker = /** @class */ (function () {
                 case "snap-get-all-keys":
                     var wasmFNs3 = { "string": _this._mod.read_index_str, "int": _this._mod.read_index_int, "float": _this._mod.read_index };
                     var wasmFNs4 = { "string": _this._mod.read_index_str_next, "int": _this._mod.read_index_int_next, "float": _this._mod.read_index_next };
-                    var it_2 = wasmFNs3[_this.keyType](_this._indexNum, msg.reverse ? 1 : 0).split(",").map(function (s) { return parseInt(s); });
-                    if (!it_2) {
+                    var it_1 = wasmFNs3[_this.keyType](_this._indexNum, msg.reverse ? 1 : 0).split(",").map(function (s) { return parseInt(s); });
+                    if (!it_1) {
                         if (process.send)
                             process.send({ type: "snap-res-done", id: msg.id, data: [] });
                         return;
                     }
                     var nextKey = 0;
                     var count = 0;
-                    while (count < it_2[1]) {
-                        nextKey = wasmFNs4[_this.keyType](_this._indexNum, it_2[0], msg.reverse ? 1 : 0, count);
+                    while (count < it_1[1]) {
+                        nextKey = wasmFNs4[_this.keyType](_this._indexNum, it_1[0], msg.reverse ? 1 : 0, count);
                         if (process.send)
                             process.send({ type: "snap-res", event: "get-keys", id: msg.id, data: ["response", nextKey] });
                         count++;
@@ -427,7 +376,7 @@ var SnapWorker = /** @class */ (function () {
                     }
                     _this._txNum = newTXNum;
                     // transaction start
-                    fs.writeSync(_this._logHandle, NULLBYTE);
+                    fs.writeSync(_this._logHandle, common_1.NULLBYTE);
                     fs.writeSync(_this._logHandle, "TX-START-" + _this._txNum);
                     _this._doingTx = true;
                     if (process.send)
@@ -435,7 +384,7 @@ var SnapWorker = /** @class */ (function () {
                     break;
                 case "snap-end-tx":
                     // transaction end
-                    fs.writeSync(_this._logHandle, NULLBYTE);
+                    fs.writeSync(_this._logHandle, common_1.NULLBYTE);
                     fs.writeSync(_this._logHandle, "TX-END-" + _this._txNum);
                     fs.fsyncSync(_this._logHandle);
                     _this._doingTx = false;
@@ -511,8 +460,10 @@ var SnapWorker = /** @class */ (function () {
                     wasmDelFns[_this.keyType](_this._indexNum);
                     // close log file
                     fs.closeSync(_this._logHandle);
+                    _this._bloomCache = {};
+                    _this._indexFileCache = {};
                     if (process.send)
-                        process.send({ type: "snap-close-done", id: msg.id, data: [] });
+                        process.send({ type: "snap-close-done", id: msg.id, data: [undefined] });
                     break;
                 case "snap-clear":
                     _this._isCompacting = true;
@@ -551,11 +502,10 @@ var SnapWorker = /** @class */ (function () {
      * @returns
      * @memberof SnapDB
      */
-    SnapWorker.prototype._loadCache = function (complete, onErr) {
+    SnapDatabase.prototype._loadCache = function () {
         var wasmFNs = { "string": this._mod.get_total_str, "int": this._mod.get_total_int, "float": this._mod.get_total };
         var total = wasmFNs[this.keyType](this._indexNum);
         if (total === 0 || !this.memoryCache) {
-            complete();
             return;
         }
         var getAllFNS = { "string": this._mod.read_index_str, "int": this._mod.read_index_int, "float": this._mod.read_index };
@@ -565,18 +515,17 @@ var SnapWorker = /** @class */ (function () {
         var countALL = 0;
         while (countALL < itALL[1]) {
             nextKeyALL = getALLFNS2[this.keyType](this._indexNum, itALL[0], 0, countALL);
-            this._cache[String(nextKeyALL)] = this._mod.database_get(this._dbNum, String(nextKeyALL)) || "";
+            this._cache[nextKeyALL] = this._get(nextKeyALL, true);
             countALL++;
         }
-        complete();
     };
     /**
-     * Get all the keys from unqlite and load them into index
+     * Get all the keys from log files and index files
      *
      * @private
      * @memberof SnapDB
      */
-    SnapWorker.prototype._loadKeys = function () {
+    SnapDatabase.prototype._loadKeys = function () {
         var _this = this;
         var parseLogLine = function (line) {
             // log record line:
@@ -632,6 +581,8 @@ var SnapWorker = /** @class */ (function () {
             }
             return [key, value];
         };
+        // populate index
+        this._readIndexFiles();
         // load LOG file into memtable
         var LOGFILE = fs.readFileSync(path.join(this._path, "LOG"));
         if (LOGFILE.length === 0) {
@@ -700,17 +651,52 @@ var SnapWorker = /** @class */ (function () {
                 }
             });
             this._isConnecting = true;
+            // load cache if it's enabled
+            this._loadCache();
+            // flush logs if needed
             this._maybeFlushLog();
         }
     };
-    SnapWorker.tomb = NULLBYTE;
-    return SnapWorker;
+    SnapDatabase.prototype._readIndexFiles = function () {
+        var _this = this;
+        fs.readdir(this._path, function (err, filenames) {
+            if (err) {
+                throw err;
+            }
+            filenames.sort(function (a, b) { return a > b ? 1 : -1; }).forEach(function (filename) {
+                if (filename.indexOf(".idx") !== -1) {
+                    fs.readFile(path.join(_this._path, filename), 'utf-8', function (err, content) {
+                        if (err) {
+                            throw err;
+                        }
+                        if (content && content.length) {
+                            var index = JSON.parse(content);
+                            var keys = Object.keys(index.keys);
+                            var i = keys.length;
+                            while (i--) {
+                                var key = _this.keyType === "string" ? keys[i] : parseFloat(keys[i]);
+                                if (index.keys[keys[i]][0] === -1) { // delete
+                                    var wasmFNs2 = { "string": _this._mod.del_key_str, "int": _this._mod.del_key_int, "float": _this._mod.del_key };
+                                    wasmFNs2[_this.keyType](_this._indexNum, key);
+                                }
+                                else { // add
+                                    var wasmFNs = { "string": _this._mod.add_to_index_str, "int": _this._mod.add_to_index_int, "float": _this._mod.add_to_index };
+                                    wasmFNs[_this.keyType](_this._indexNum, key);
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+        });
+    };
+    return SnapDatabase;
 }());
 process.on('message', function (msg) {
     switch (msg.type) {
         case "snap-connect":
-            new SnapWorker(msg.path, msg.keyType, msg.cache);
+            new SnapDatabase(msg.path, msg.keyType, msg.cache);
             break;
     }
 });
-//# sourceMappingURL=child.js.map
+//# sourceMappingURL=database.js.map

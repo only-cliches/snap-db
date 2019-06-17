@@ -23,7 +23,7 @@ const testLevelDB = (sampleData) => {
         const sampleBatch = sampleData.map(s => {
             return {type: "put", key: s[0], value: s[1]};
         });
-        process.exit();
+
         let start = Date.now();
         db.batch(sampleBatch, (err) => {
             if (err) return console.log(err);
@@ -52,13 +52,9 @@ const testLevelDB = (sampleData) => {
 
 const testSnapDB = (sampleData) => {
     return new Promise((res, rej) => {
-        try {
-            fs.unlinkSync("my_db");
-        } catch(e) {
-
-        }
+        const dbName = makeid(10);
         
-        var db = new SnapDB("my_db", "string");
+        var db = new SnapDB(dbName, "string");
         let start = 0;
         let writeSpeed = 0;
         db.ready().then(() => {
@@ -72,16 +68,19 @@ const testSnapDB = (sampleData) => {
                 return Promise.resolve();
             })
         }).then(() => {
-            
             start = Date.now();
             let count = 0;
             db.getAll((key, data) => {
                 count++;
-            }, () => {
-                res([
-                    Math.round(count / (Date.now() - start) * 1000),
-                    writeSpeed
-                ]);
+            }, (err) => {
+                const readSpead = Math.round(count / (Date.now() - start) * 1000);
+                db.close().then(() => {
+                    rimraf.sync(dbName);
+                    res([
+                        readSpead,
+                        writeSpeed
+                    ]);
+                });
             })
         })
     })
@@ -107,7 +106,7 @@ const testSnapDBMany = () => {
             console.log("SnapDB");
             console.log(average(writes).toLocaleString(), "op/s (WRITE)");
             console.log(average(reads).toLocaleString(), "op/s (READ)");
-            // testLevelMany();
+            testLevelMany();
         }
     })
 }
@@ -127,11 +126,11 @@ const testLevelMany = () => {
             const reads = results.map(s => s[0]);
             console.log(average(writes).toLocaleString(), "op/s (WRITE)");
             console.log(average(reads).toLocaleString(), "op/s (READ)");
-            testSnapDBMany();
+            // testSnapDBMany();
         }
     })
 }
 
-testLevelMany();
-// testSnapDBMany();
+// testLevelMany();
+testSnapDBMany();
 

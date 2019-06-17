@@ -1,6 +1,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 var path = require("path");
 var child_process_1 = require("child_process");
+var common_1 = require("./common");
+var really_small_events_1 = require("really-small-events");
+var fs = require("fs");
 var messageBuffer = {};
 exports.rand = function () {
     var text = "";
@@ -22,24 +25,119 @@ var SnapDB = /** @class */ (function () {
         var _this = this;
         this.keyType = keyType;
         this.memoryCache = memoryCache;
-        this._path = fileName === ":memory:" ? fileName : (path.isAbsolute(fileName) ? fileName : path.join(process.cwd(), fileName));
-        this._worker = child_process_1.fork(path.join(__dirname, "child.js"));
+        this.version = common_1.VERSION;
+        this._hasEvents = false;
+        this.isCompacting = false;
+        this.isTx = false;
+        this._path = path.resolve(fileName);
+        this._rse = new really_small_events_1.ReallySmallEvents();
+        this._worker = child_process_1.fork(path.join(__dirname, "database.js"));
+        this._compactor = child_process_1.fork(path.join(__dirname, "compact.js"));
+        var clearCompactFiles = [];
         this._worker.on("message", function (msg) {
             switch (msg.type) {
                 case "snap-ready":
                     _this._isReady = true;
                     break;
+                case "snap-compact":
+                    _this.isCompacting = true;
+                    _this._compactor.send("do-compact");
+                    if (_this._hasEvents)
+                        _this._rse.trigger("compact-start", { target: _this, time: Date.now() });
+                    break;
+                case "snap-compact-done":
+                    _this.isCompacting = false;
+                    // safe to remove old files now
+                    clearCompactFiles.forEach(function (fileID) {
+                        try {
+                            fs.unlinkSync(path.join(_this._path, common_1.fileName(fileID) + ".dta"));
+                            fs.unlinkSync(path.join(_this._path, common_1.fileName(fileID) + ".idx"));
+                            fs.unlinkSync(path.join(_this._path, common_1.fileName(fileID) + ".bom"));
+                        }
+                        catch (e) {
+                        }
+                    });
+                    clearCompactFiles = [];
+                    if (_this._hasEvents)
+                        _this._rse.trigger("compact-end", { target: _this, time: Date.now() });
+                    break;
                 case "snap-res":
+                    if (msg.event && _this._hasEvents) {
+                        _this._rse.trigger(msg.event, { target: _this, time: Date.now(), data: msg.data });
+                    }
                     messageBuffer[msg.id].apply(null, [msg.data]);
                     break;
                 case "snap-res-done":
+                    if (msg.event && _this._hasEvents) {
+                        _this._rse.trigger(msg.event, { target: _this, time: Date.now(), data: msg.data });
+                    }
+                    if (msg.event === "tx-start") {
+                        _this.isTx = true;
+                    }
+                    if (msg.event === "tx-end") {
+                        _this.isTx = false;
+                    }
                     messageBuffer[msg.id].apply(null, [msg.data]);
                     delete messageBuffer[msg.id];
                     break;
+                case "snap-clear-done":
+                    _this._isReady = true;
+                    messageBuffer[msg.id].apply(null, [msg.data]);
+                    delete messageBuffer[msg.id];
+                    if (_this._hasEvents)
+                        _this._rse.trigger("clear", { target: _this, time: Date.now() });
+                    break;
+                case "snap-close-done":
+                    _this._isReady = false;
+                    _this._compactor.kill();
+                    _this._worker.kill();
+                    messageBuffer[msg.id].apply(null, [msg.data]);
+                    delete messageBuffer[msg.id];
+                    if (_this._hasEvents)
+                        _this._rse.trigger("close", { target: _this, time: Date.now() });
+                    break;
+            }
+        });
+        this._compactor.on("message", function (msg) {
+            if (msg.type === "compact-done") {
+                clearCompactFiles = msg.files;
+                _this._worker.send({ type: "compact-done" });
             }
         });
         this._worker.send({ type: "snap-connect", path: this._path, cache: this.memoryCache, keyType: this.keyType });
+        this._compactor.send({ type: "snap-compact", path: this._path, cache: this.memoryCache, keyType: this.keyType });
     }
+    /**
+     * Listen for events
+     *
+     * @param {string} event
+     * @param {() => void} callback
+     * @memberof SnapDB
+     */
+    SnapDB.prototype.on = function (event, callback) {
+        this._hasEvents = true;
+        this._rse.on(event, callback);
+    };
+    /**
+     * Turn off listener for events
+     *
+     * @param {string} event
+     * @param {() => void} callback
+     * @memberof SnapDB
+     */
+    SnapDB.prototype.off = function (event, callback) {
+        this._rse.off(event, callback);
+    };
+    SnapDB.prototype.doCompaction = function () {
+        var _this = this;
+        return new Promise(function (res, rej) {
+            if (_this.isCompacting === true) {
+                rej("Already compacting!");
+                return;
+            }
+            rej("Not implemented yet!");
+        });
+    };
     /**
      * This promise returns when the database is ready to use.
      *
@@ -51,6 +149,7 @@ var SnapDB = /** @class */ (function () {
         return new Promise(function (res, rej) {
             var checkReady = function () {
                 if (_this._isReady) {
+                    _this._rse.trigger("ready", { target: _this, time: Date.now() });
                     res();
                 }
                 else {
@@ -382,6 +481,7 @@ var SnapDB = /** @class */ (function () {
                 res();
                 return;
             }
+            _this._isReady = false;
             var msgId = exports.rand();
             while (messageBuffer[msgId]) {
                 msgId = exports.rand();
@@ -394,6 +494,16 @@ var SnapDB = /** @class */ (function () {
                     res();
                 }
             };
+            // kill compactor thread (don't care what it's doing)
+            _this._compactor.kill();
+            // spin up new compactor thread
+            _this._compactor = child_process_1.fork(path.join(__dirname, "compact.js"));
+            _this._compactor.on("message", function (msg) {
+                if (msg === "compcact-done") {
+                    _this._worker.send({ type: "compact-done" });
+                }
+            });
+            _this._compactor.send({ type: "snap-compact", path: _this._path, cache: _this.memoryCache, keyType: _this.keyType });
             _this._worker.send({ type: "snap-clear", id: msgId });
         });
     };
@@ -405,18 +515,18 @@ function makeid() {
     var text = "";
     var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-    for (var i = 0; i < Math.ceil(Math.random() * 40) + 10; i++)
+    for (var i = 0; i < Math.ceil(Math.random() * 400) + 100; i++)
         text += possible.charAt(Math.floor(Math.random() * possible.length));
 
     return text;
 }
 
-const db = new SnapDB<number>("my-db-test", "int");
+const db = new SnapDB<number>("my-db-test", "int", true);
 db.ready().then(() => {
     console.log("READY");
 
     let arr: any[] = [];
-    let count = 10000;
+    let count = 100000;
     for (let i = 0; i < count; i++) {
         arr.push([i + 1, makeid(), makeid()]);
     }
@@ -424,14 +534,10 @@ db.ready().then(() => {
     arr = arr.sort((a, b) => Math.random() > 0.5 ? 1 : -1);
     const writeStart = Date.now();
     let last: any;
-    db.begin_transaction().then(() => {
-        return Promise.all(arr.map(r => db.put(r[0], r[2])))
-    }).then(() => {
-        return db.end_transaction();
-    }).then(() => {
-        console.log((count / (Date.now() - writeStart) * 1000).toLocaleString(), "Records Per Second (WRITE)");
-        const start = Date.now();
-        let ct = 0;
+    const start = Date.now();
+    let ct = 0;
+    let read = false;
+    if (read) {
         db.getAll((key, data) => {
             ct++;
             // console.log(key, data);
@@ -442,8 +548,36 @@ db.ready().then(() => {
             const time = (Date.now() - start);
             db.getCount().then((ct) => {
                 console.log(((ct / time) * 1000).toLocaleString(), "Records Per Second (READ)");
+                return db.close();
             });
         }, false);
-    })
+    } else {
+        db.begin_transaction().then(() => {
+            return Promise.all(arr.map(r => {
+                return db.put(r[0], r[2]);
+            }))
+        }).then(() => {
+            return db.end_transaction();
+        }).then(() => {
+            console.log((count / (Date.now() - writeStart) * 1000).toLocaleString(), "Records Per Second (WRITE)");
+            const start = Date.now();
+            let ct = 0;
+            db.getAll((key, data) => {
+                ct++;
+                // console.log(key, data);
+            }, (err) => {
+                if (err) {
+                    console.log(err);
+                }
+                const time = (Date.now() - start);
+                db.getCount().then((ct) => {
+                    console.log(((ct / time) * 1000).toLocaleString(), "Records Per Second (READ)");
+                    return db.close();
+                });
+            }, false);
+        }).catch((err) => {
+            console.trace()
+        })
+    }
 });*/ 
 //# sourceMappingURL=index.js.map

@@ -1,7 +1,7 @@
 {
   "name": "snap-db",
-  "version": "1.0.3",
-  "description": "Simple & Fast Javascript/Webassembly key-value store",
+  "version": "1.0.4",
+  "description": "Fast & Durable pure javascript key-value store for NodeJS/Electron",
   "main": "bin/index.js",
   "typings": "bin/index.d.ts",
   "scripts": {
@@ -17,6 +17,15 @@
     "key-value",
     "no-sql",
     "database",
+    "bloom",
+    "lsm",
+    "leveldb",
+    "level",
+    "rocksdb",
+    "rocks",
+    "lsm-tree",
+    "lsm tree",
+    "log structure merge tree",
     "db",
     "data-store",
     "memcache",
@@ -37,5 +46,7 @@
     "mocha": "^6.1.4",
     "typescript": "^3.4.5"
   },
-  "dependencies": {}
+  "dependencies": {
+    "really-small-events": "^1.1.0"
+  }
 }

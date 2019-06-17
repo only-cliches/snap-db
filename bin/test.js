@@ -56,7 +56,7 @@ describe("SnapDB Tests", function () {
                 }
             });
         });
-    }).timeout(5000);
+    }).timeout(10000);
     it("Integer: Sorted Keys", function (done) {
         data["int"] = data["int"].sort(function (a, b) { return a[0] > b[0] ? 1 : -1; });
         var dataFromDB = [];

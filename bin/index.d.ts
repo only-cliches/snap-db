@@ -1,10 +1,21 @@
 export declare const rand: () => string;
+export interface SnapEvent {
+    target: SnapDB<any>;
+    time: number;
+    [key: string]: any;
+}
 export declare class SnapDB<K> {
     keyType: "string" | "float" | "int";
     memoryCache?: boolean | undefined;
     private _isReady;
     private _path;
     private _worker;
+    private _compactor;
+    version: number;
+    private _rse;
+    private _hasEvents;
+    isCompacting: boolean;
+    isTx: boolean;
     /**
      * Creates an instance of SnapDB.
      *
@@ -14,6 +25,23 @@ export declare class SnapDB<K> {
      * @memberof SnapDB
      */
     constructor(fileName: string, keyType: "string" | "float" | "int", memoryCache?: boolean | undefined);
+    /**
+     * Listen for events
+     *
+     * @param {string} event
+     * @param {() => void} callback
+     * @memberof SnapDB
+     */
+    on(event: string, callback: (event: SnapEvent) => void): void;
+    /**
+     * Turn off listener for events
+     *
+     * @param {string} event
+     * @param {() => void} callback
+     * @memberof SnapDB
+     */
+    off(event: string, callback: (event: SnapEvent) => void): void;
+    doCompaction(): Promise<any>;
     /**
      * This promise returns when the database is ready to use.
      *

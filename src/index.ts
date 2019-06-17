@@ -1,5 +1,8 @@
 import * as path from "path";
 import { fork, ChildProcess } from "child_process";
+import { VERSION, fileName as fNameFN } from "./common";
+import { ReallySmallEvents } from "really-small-events";
+import * as fs from "fs";
 
 const messageBuffer: {
     [messageId: string]: (values: string[]) => void;
@@ -15,11 +18,23 @@ export const rand = () => {
     return text;
 }
 
+export interface SnapEvent {
+    target: SnapDB<any>,
+    time: number,
+    [key: string]: any;
+}
+
 export class SnapDB<K> {
 
     private _isReady: boolean;
     private _path: string;
     private _worker: ChildProcess;
+    private _compactor: ChildProcess;
+    public version: number = VERSION;
+    private _rse: ReallySmallEvents;
+    private _hasEvents: boolean = false;
+    public isCompacting: boolean = false;
+    public isTx: boolean = false;
 
     /**
      * Creates an instance of SnapDB.
@@ -35,25 +50,114 @@ export class SnapDB<K> {
         public memoryCache?: boolean
     ) {
 
-        this._path = fileName === ":memory:" ? fileName : (path.isAbsolute(fileName) ? fileName : path.join(process.cwd(), fileName));
+        this._path = path.resolve(fileName);
+        this._rse = new ReallySmallEvents();
 
-        this._worker = fork(path.join(__dirname, "child.js"));
+        this._worker = fork(path.join(__dirname, "database.js"));
+        this._compactor = fork(path.join(__dirname, "compact.js"));
+        let clearCompactFiles: number[] = [];
 
         this._worker.on("message", (msg) => { // got message from worker
             switch (msg.type) {
                 case "snap-ready":
                     this._isReady = true;
                     break;
+                case "snap-compact":
+                    this.isCompacting = true;
+                    this._compactor.send("do-compact");
+                    if (this._hasEvents) this._rse.trigger("compact-start", {target: this, time: Date.now()});
+                    break;
+                case "snap-compact-done":
+                    this.isCompacting = false;
+                    // safe to remove old files now
+                    clearCompactFiles.forEach((fileID) => {
+                        try {
+                            fs.unlinkSync(path.join(this._path, fNameFN(fileID) + ".dta"));
+                            fs.unlinkSync(path.join(this._path, fNameFN(fileID) + ".idx"));
+                            fs.unlinkSync(path.join(this._path, fNameFN(fileID) + ".bom"));
+                        } catch(e) {
+
+                        }
+                    });
+                    clearCompactFiles = [];
+                    if (this._hasEvents) this._rse.trigger("compact-end", {target: this, time: Date.now()});
+                    break;
                 case "snap-res":
+                    if (msg.event && this._hasEvents) {
+                        this._rse.trigger(msg.event, {target: this, time: Date.now(), data: msg.data});
+                    }
                     messageBuffer[msg.id].apply(null, [msg.data]);
                     break;
                 case "snap-res-done":
+                    if (msg.event && this._hasEvents) {
+                        this._rse.trigger(msg.event, {target: this, time: Date.now(), data: msg.data});
+                    }
+                    if (msg.event === "tx-start") {
+                        this.isTx = true;
+                    }
+                    if (msg.event === "tx-end") {
+                        this.isTx = false;
+                    }
                     messageBuffer[msg.id].apply(null, [msg.data]);
                     delete messageBuffer[msg.id];
                     break;
+                case "snap-clear-done":
+                    this._isReady = true;
+                    messageBuffer[msg.id].apply(null, [msg.data]);
+                    delete messageBuffer[msg.id];
+                    if (this._hasEvents) this._rse.trigger("clear", {target: this, time: Date.now()});
+                    break;
+                case "snap-close-done":
+                    this._isReady = false;
+                    this._compactor.kill();
+                    this._worker.kill();
+                    messageBuffer[msg.id].apply(null, [msg.data]);
+                    delete messageBuffer[msg.id];
+                    if (this._hasEvents) this._rse.trigger("close", {target: this, time: Date.now()});
+                    break;
+            }
+        });
+        this._compactor.on("message", (msg) => {
+            if (msg.type === "compact-done") {
+                clearCompactFiles = msg.files;
+                this._worker.send({type: "compact-done"});
             }
         });
         this._worker.send({ type: "snap-connect", path: this._path, cache: this.memoryCache, keyType: this.keyType });
+        this._compactor.send({ type: "snap-compact", path: this._path, cache: this.memoryCache, keyType: this.keyType });
+    }
+
+    /**
+     * Listen for events
+     *
+     * @param {string} event
+     * @param {() => void} callback
+     * @memberof SnapDB
+     */
+    public on(event: string, callback: (event: SnapEvent) => void) {
+        this._hasEvents = true;
+        this._rse.on(event, callback);
+    }
+
+    /**
+     * Turn off listener for events
+     *
+     * @param {string} event
+     * @param {() => void} callback
+     * @memberof SnapDB
+     */
+    public off(event: string, callback: (event: SnapEvent) => void) {
+        this._rse.off(event, callback);
+    }
+
+    public doCompaction():Promise<any> {
+        return new Promise((res, rej) => {
+            if (this.isCompacting === true) {
+                rej("Already compacting!");
+                return;
+            }
+            rej("Not implemented yet!");
+        })
     }
 
     /**
@@ -66,6 +170,7 @@ export class SnapDB<K> {
         return new Promise((res, rej) => {
             const checkReady = () => {
                 if (this._isReady) {
+                    this._rse.trigger("ready", {target: this, time: Date.now()});
                     res();
                 } else {
                     setTimeout(checkReady, 100);
@@ -416,6 +521,7 @@ export class SnapDB<K> {
                 res();
                 return;
             }
+            this._isReady = false;
             let msgId = rand();
             while (messageBuffer[msgId]) {
                 msgId = rand();
@@ -427,6 +533,18 @@ export class SnapDB<K> {
                     res();
                 }
             }
+
+            // kill compactor thread (don't care what it's doing)
+            this._compactor.kill();
+
+            // spin up new compactor thread
+            this._compactor = fork(path.join(__dirname, "compact.js"));
+            this._compactor.on("message", (msg) => {
+                if (msg === "compcact-done") {
+                    this._worker.send({type: "compact-done"});
+                }
+            });
+            this._compactor.send({ type: "snap-compact", path: this._path, cache: this.memoryCache, keyType: this.keyType });
 
             this._worker.send({ type: "snap-clear", id: msgId });
         });
@@ -440,18 +558,18 @@ function makeid() {
     var text = "";
     var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-    for (var i = 0; i < Math.ceil(Math.random() * 40) + 10; i++)
+    for (var i = 0; i < Math.ceil(Math.random() * 400) + 100; i++)
         text += possible.charAt(Math.floor(Math.random() * possible.length));
 
     return text;
 }
 
-const db = new SnapDB<number>("my-db-test", "int");
+const db = new SnapDB<number>("my-db-test", "int", true);
 db.ready().then(() => {
     console.log("READY");
 
     let arr: any[] = [];
-    let count = 10000;
+    let count = 100000;
     for (let i = 0; i < count; i++) {
         arr.push([i + 1, makeid(), makeid()]);
     }
@@ -459,14 +577,10 @@ db.ready().then(() => {
     arr = arr.sort((a, b) => Math.random() > 0.5 ? 1 : -1);
     const writeStart = Date.now();
     let last: any;
-    db.begin_transaction().then(() => {
-        return Promise.all(arr.map(r => db.put(r[0], r[2])))
-    }).then(() => {
-        return db.end_transaction();
-    }).then(() => {
-        console.log((count / (Date.now() - writeStart) * 1000).toLocaleString(), "Records Per Second (WRITE)");
-        const start = Date.now();
-        let ct = 0;
+    const start = Date.now();
+    let ct = 0;
+    let read = false;
+    if (read) {
         db.getAll((key, data) => {
             ct++;
             // console.log(key, data);
@@ -477,7 +591,35 @@ db.ready().then(() => {
             const time = (Date.now() - start);
             db.getCount().then((ct) => {
                 console.log(((ct / time) * 1000).toLocaleString(), "Records Per Second (READ)");
+                return db.close();
             });
         }, false);
-    })
+    } else {
+        db.begin_transaction().then(() => {
+            return Promise.all(arr.map(r => {
+                return db.put(r[0], r[2]);
+            }))
+        }).then(() => {
+            return db.end_transaction();
+        }).then(() => {
+            console.log((count / (Date.now() - writeStart) * 1000).toLocaleString(), "Records Per Second (WRITE)");
+            const start = Date.now();
+            let ct = 0;
+            db.getAll((key, data) => {
+                ct++;
+                // console.log(key, data);
+            }, (err) => {
+                if (err) {
+                    console.log(err);
+                }
+                const time = (Date.now() - start);
+                db.getCount().then((ct) => {
+                    console.log(((ct / time) * 1000).toLocaleString(), "Records Per Second (READ)");
+                    return db.close();
+                });
+            }, false);
+        }).catch((err) => {
+            console.trace()
+        })
+    }
 });*/

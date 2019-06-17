@@ -1,6 +1,8 @@
-# [1.0.4]
+# [1.0.4] 06-17-2019
+- Resolved issue with SnapDB not working on Windows hosts.
 - Replaced SQLite with custom javascript LSM database.
 - Added an automated migration script to move SQLite databases into new LSM backend.
+- Added event system.
 
 # [1.0.3] 05-21-2019
 - Fixed issue with zero length indexes.

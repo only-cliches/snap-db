@@ -186,7 +186,7 @@ Compactions are only possibly performed following a log flush or when manually t
 
 Once the logfile/memtable reach a threshold in size (2MB by default) all it's data is flushed to the first of many "Levels" of database files.  Each database file is an immutable SSTable containing a bloom filter, a sorted index, and a data file containing the actual values. Database/Level files are never overwritten, modified or larger than 2MB unless database keys or values are larger than 2MB.  
 
-> A limitation to the size limiter for log/memtable involves transactions.  A single transaction, regardless of it's size, is commited entirley to the log before compaction begins.  This gaurantees that transactions are ACID but limits the transaction size to available memory.
+> A limitation to the size limiter for log/memtable involves transactions.  A single transaction, regardless of it's size, is commited entirely to the log before compaction begins.  This gaurantees that transactions are ACID but limits the transaction size to available memory.
 
 Log flushes involve rewriting all files at Level 0 and merging them with the contents of the memtable.  Once Level 0 contains more than 10MB of data one of the files in Level 0 is selected and it's contents are merged with files in Level 1 that overlap the keys in the selected Level 0 file.  After the merge all data in the selectd Level 0 file is now in Level 1.  
 

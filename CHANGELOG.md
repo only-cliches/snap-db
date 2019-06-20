@@ -1,6 +1,13 @@
 # TODO
 - Cluster support with support for parallel reads.
 
+# [1.0.7]
+- *BREAKING CHANGE* the arguments for the class is now an object.
+- Small performance optimizations.
+- Fixed key type casting in compaction function.
+- Added `flushLog` method.
+- Added ability to control the databse flushing.
+
 # [1.0.6] 06-17-2019
 - Removed Webassembly requirement, keyspace is now limited to javascript memory.
 - Fixed a bug with compaction.

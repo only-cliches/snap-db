@@ -3,6 +3,7 @@ import { fork, ChildProcess } from "child_process";
 import { VERSION, fileName as fNameFN } from "./common";
 import { ReallySmallEvents } from "./rse";
 import * as fs from "fs";
+import { Agent } from "http";
 
 
 const messageBuffer: {
@@ -37,27 +38,37 @@ export class SnapDB<K> {
     public isCompacting: boolean = false;
     public isTx: boolean = false;
     public clearCompactFiles: number[] = [];
+    private _compactId: string;
+    public keyType: "string" | "float" | "int";
+    public memoryCache?: boolean;
 
     /**
-     * Creates an instance of SnapDB.
-     * 
-     * @param {string} fileName
-     * @param {("string" | "float" | "int")} keyType
-     * @param {boolean} [memoryCache]
+     *Creates an instance of SnapDB.
+     * @param {({
+     *         dir: string,
+     *         key: "string" | "float" | "int",
+     *         cache?: boolean,
+     *         autoFlush?: number|boolean
+     *     })} args
      * @memberof SnapDB
      */
-    constructor(
-        fileName: string,
-        public keyType: "string" | "float" | "int",
-        public memoryCache?: boolean
-    ) {
+    constructor(args: {
+        dir: string,
+        key: "string" | "float" | "int",
+        cache?: boolean,
+        autoFlush?: number|boolean
+    }) {
 
-        this._path = path.resolve(fileName);
+        this._path = path.resolve(args.dir);
+        this.keyType = args.key;
+        this.memoryCache = args.cache || false;
         this._rse = new ReallySmallEvents();
 
         this._worker = fork(path.join(__dirname, "database.js"));
         this._compactor = fork(path.join(__dirname, "compact.js"));
         this.clearCompactFiles = [];
+        
+        const autoFlush = typeof args.autoFlush === "undefined" ? true : args.autoFlush;
 
         this._worker.on("message", (msg) => { // got message from worker
             switch (msg.type) {
@@ -83,6 +94,11 @@ export class SnapDB<K> {
                     });
                     this.clearCompactFiles = [];
                     if (this._hasEvents) this._rse.trigger("compact-end", {target: this, time: Date.now()});
+                    if (this._compactId && messageBuffer[this._compactId]) {
+                        messageBuffer[this._compactId].apply(null, [undefined]);
+                        delete messageBuffer[this._compactId];
+                        this._compactId = "";
+                    }
                     break;
                 case "snap-res":
                     if (msg.event && this._hasEvents) {
@@ -125,8 +141,8 @@ export class SnapDB<K> {
                 this._worker.send({type: "compact-done"});
             }
         });
-        this._worker.send({ type: "snap-connect", path: this._path, cache: this.memoryCache, keyType: this.keyType });
-        this._compactor.send({ type: "snap-compact", path: this._path, cache: this.memoryCache, keyType: this.keyType });
+        this._worker.send({ type: "snap-connect", path: this._path, cache: this.memoryCache, keyType: this.keyType, autoFlush: autoFlush });
+        this._compactor.send({ type: "snap-compact", path: this._path, cache: this.memoryCache, keyType: this.keyType, autoFlush: autoFlush });
     }
 
     /**
@@ -152,13 +168,33 @@ export class SnapDB<K> {
         this._rse.off(event, callback);
     }
 
-    public doCompaction():Promise<any> {
+    /**
+     * Forces the log to be flushed to disk files, possibly causing a compaction.
+     *
+     * @returns {Promise<any>}
+     * @memberof SnapDB
+     */
+    public flushLog():Promise<any> {
         return new Promise((res, rej) => {
             if (this.isCompacting === true) {
                 rej("Already compacting!");
                 return;
             }
-            rej("Not implemented yet!");
+            this.isCompacting = true;
+            this._worker.send({type: "do-compact"});
+
+            let msgId = rand();
+            while (messageBuffer[msgId]) {
+                msgId = rand();
+            }
+            this._compactId = msgId;
+            messageBuffer[msgId] = (data) => {
+                if (data[0]) {
+                    rej(data[0]);
+                } else {
+                    res(data[1]);
+                }
+            }
         })
     }
 

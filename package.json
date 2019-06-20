@@ -1,12 +1,12 @@
 {
   "name": "snap-db",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Fast & Durable pure javascript key-value store for NodeJS/Electron",
   "main": "bin/index.js",
   "typings": "bin/index.d.ts",
   "scripts": {
     "build-wasm": "cd src-wasm && ./build.sh --prod && cp ../src/db.js ../bin/db.js",
-    "build": "tsc",
+    "build": "tsc && cp ../src/db.js ../bin/db.js",
     "test": "tsc && rm -rf testDB* && mocha bin/test.js && rm -rf testDB*"
   },
   "repository": {

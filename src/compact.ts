@@ -68,105 +68,123 @@ export class SnapCompactor {
             
             const index: SnapIndex = JSON.parse(fs.readFileSync(path.join(this.path, fileName(fileID) + ".idx"), "utf-8"));
             const data = fs.readFileSync(path.join(this.path, fileName(fileID) + ".dta"), "utf-8");
-            Object.keys(index.keys).forEach((key) => {
-                
 
-                if (index.keys[key][0] === -1) { // tombstone
+            const keys = Object.keys(index.keys);
+            let i = 0;
+            while(i < keys.length) {
+                const key = this.keyType === "string" ? keys[i] : parseFloat(keys[i]);
+                
+                if (index.keys[keys[i]][0] === -1) { // tombstone
                     // if higher level has this key, keep tombstone.  Otherwise discard it
                     if (hasOlderValues(key, level)) {
-                        compactIndex = compactIndex.insert(this.keyType === "string" ? key : parseFloat(key), NULLBYTE);
+                        compactIndex = compactIndex.insert(key, NULLBYTE);
                     } else {
-                        compactIndex = compactIndex.remove(this.keyType === "string" ? key : parseFloat(key));
+                        compactIndex = compactIndex.remove(key);
                     }
                 } else {
-                    compactIndex = compactIndex.insert(this.keyType === "string" ? key : parseFloat(key), data.slice(index.keys[key][0], index.keys[key][0] + index.keys[key][1]));
+                    compactIndex = compactIndex.insert(key, data.slice(index.keys[key][0], index.keys[key][0] + index.keys[key][1]));
                 }
-            });
+
+                i++;
+            };
         }
 
         let deleteFiles: [number, number][] = [];
 
-        this._manifestData.lvl.forEach((lvl, i) => {
-            const maxSizeMB = Math.pow(10, i + 1);
-            let size = 0;
-            lvl.files.forEach((file) => {
-                const fName = fileName(file.i);
-                size += (fs.statSync(path.join(this.path, fName) + ".dta").size / 1000000.0);
-                size += (fs.statSync(path.join(this.path, fName) + ".idx").size / 1000000.0);
-                size += (fs.statSync(path.join(this.path, fName) + ".bom").size / 1000000.0);
-            });
-            if (size > maxSizeMB) { // compact this level
-                if (i === 0) { // level 0 to level 1, merge all files since keys probably overlap
+        if (this._manifestData.lvl && this._manifestData.lvl.length) {
 
-                    // load older files first
-                    if(this._manifestData.lvl[1]) {
-                        this._manifestData.lvl[1].files.forEach((file) => {
-                            // mark all existing level 1 files for deletion
-                            deleteFiles.push([1, file.i]);
-                            loadFile(file.i, 1);
-                        });
-                    }
+            let i = 0;
 
-                    // then newer files
-                    lvl.files.forEach((file) => {
-                        // mark all existing level 0 files for deletion
-                        deleteFiles.push([i, file.i]);
-                        loadFile(file.i, 0);
-                    });
+            while(i < this._manifestData.lvl.length) {
+                const lvl = this._manifestData.lvl[i];
+    
+                const maxSizeMB = Math.pow(10, i + 1);
+                let size = 0;
+                let k = 0;
 
-                    // write files to disk
-                    tableGenerator(1, this._manifestData, this.path, compactIndex);
-
-                } else { // level 1+, only merge some files
-
-                    // loop compaction marker around
-                    if (lvl.comp >= lvl.files.length) {
-                        lvl.comp = 0;
-                    }
-
-                    // get keyrange for file we're compacting
-                    let keyRange: any[] = [];
-                    lvl.files.forEach((file, k) => {
-                        if (lvl.comp === k) {
-                            keyRange = file.range;
-                        }
-                    });
-                    
-                    // increment compaction marker for next compaction
-                    lvl.comp++;
-
-                    // find overlapping files in the next level
-                    if(this._manifestData.lvl[i + 1]) {
-                        this._manifestData.lvl[i + 1].files.forEach((file) => {
-                            if (file.range[0] >= keyRange[0] && file.range[1] <= keyRange[0]) { // is starting key in the range for this file?
-                                deleteFiles.push([i + 1, file.i]);
-                                loadFile(file.i, i + 1);
-                            } else if (file.range[0] >= keyRange[1] && file.range[1] <= keyRange[1]) { // is ending key in the range for this file?
-                                deleteFiles.push([i + 1, file.i]);
-                                loadFile(file.i, i + 1);
-                            } else if (file.range[0] >= keyRange[0] && file.range[1] <= keyRange[1]) { // are the keys in the file entirely overlapping?
-                                deleteFiles.push([i + 1, file.i]);
-                                loadFile(file.i, i + 1);
-                            }
-                        });
-                    }
-
-                    // grab newest changes
-                    lvl.files.forEach((file, k) => {
-                        if (lvl.comp === k) {
-                            // grab file at this level
-                            deleteFiles.push([i, file.i]);
-                            loadFile(file.i, i);
-                        }
-                    });
-
-                    // write files to disk
-                    tableGenerator(i + 1, this._manifestData, this.path, compactIndex);
+                while(k < lvl.files.length) {
+                    const file = lvl.files[k];
+                    const fName = fileName(file.i);
+                    size += (fs.statSync(path.join(this.path, fName) + ".dta").size / 1000000.0);
+                    size += (fs.statSync(path.join(this.path, fName) + ".idx").size / 1000000.0);
+                    size += (fs.statSync(path.join(this.path, fName) + ".bom").size / 1000000.0);
+                    k++;
                 }
 
-                compactIndex = createRBTree();
-            }
-        });
+                if (size > maxSizeMB) { // compact this level
+                    if (i === 0) { // level 0 to level 1, merge all files since keys probably overlap
+
+                        // load older files first
+                        if(this._manifestData.lvl[1]) {
+                            this._manifestData.lvl[1].files.forEach((file) => {
+                                // mark all existing level 1 files for deletion
+                                deleteFiles.push([1, file.i]);
+                                loadFile(file.i, 1);
+                            });
+                        }
+
+                        // then newer files
+                        lvl.files.forEach((file) => {
+                            // mark all existing level 0 files for deletion
+                            deleteFiles.push([i, file.i]);
+                            loadFile(file.i, 0);
+                        });
+
+                        // write files to disk
+                        tableGenerator(1, this._manifestData, this.path, compactIndex);
+
+                    } else { // level 1+, only merge some files
+
+                        // loop compaction marker around
+                        if (lvl.comp >= lvl.files.length) {
+                            lvl.comp = 0;
+                        }
+
+                        // get keyrange for file we're compacting
+                        let keyRange: any[] = [];
+                        lvl.files.forEach((file, k) => {
+                            if (lvl.comp === k) {
+                                keyRange = file.range;
+                            }
+                        });
+                        
+                        // increment compaction marker for next compaction
+                        lvl.comp++;
+
+                        // find overlapping files in the next level
+                        if(this._manifestData.lvl[i + 1]) {
+                            this._manifestData.lvl[i + 1].files.forEach((file) => {
+                                if (file.range[0] >= keyRange[0] && file.range[1] <= keyRange[0]) { // is starting key in the range for this file?
+                                    deleteFiles.push([i + 1, file.i]);
+                                    loadFile(file.i, i + 1);
+                                } else if (file.range[0] >= keyRange[1] && file.range[1] <= keyRange[1]) { // is ending key in the range for this file?
+                                    deleteFiles.push([i + 1, file.i]);
+                                    loadFile(file.i, i + 1);
+                                } else if (file.range[0] >= keyRange[0] && file.range[1] <= keyRange[1]) { // are the keys in the file entirely overlapping?
+                                    deleteFiles.push([i + 1, file.i]);
+                                    loadFile(file.i, i + 1);
+                                }
+                            });
+                        }
+
+                        // grab newest changes
+                        lvl.files.forEach((file, k) => {
+                            if (lvl.comp === k) {
+                                // grab file at this level
+                                deleteFiles.push([i, file.i]);
+                                loadFile(file.i, i);
+                            }
+                        });
+
+                        // write files to disk
+                        tableGenerator(i + 1, this._manifestData, this.path, compactIndex);
+                    }
+
+                    compactIndex = createRBTree();
+                }
+                i++;
+            };
+        }
 
         // clear old files from manifest
         deleteFiles.forEach((fileInfo) => {

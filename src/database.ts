@@ -57,7 +57,8 @@ class SnapDatabase {
     constructor(
         public _path: string,
         public keyType: string,
-        public memoryCache: boolean
+        public memoryCache: boolean,
+        public autoFlush: boolean|number
     ) {
         this._checkForMigration();
     }
@@ -261,13 +262,21 @@ class SnapDatabase {
         throw new Error("Key not found!");
     }
 
-    private _maybeFlushLog() {
+    private _maybeFlushLog(forceFlush?: boolean) {
         if (this._doingTx || this._isCompacting) {
             return;
         }
 
-        // flush log & memtable at 2 megabytes
-        if (this._memTableSize > 2000000) {
+        const OneMB = 1000000;
+
+        if (this.autoFlush === false && !forceFlush) {
+            return;
+        }
+
+        const maxSize = typeof this.autoFlush === "boolean" ? 2 * OneMB : this.autoFlush * OneMB;
+
+        // flush log & memtable
+        if (this._memTableSize > maxSize || forceFlush) {
 
             tableGenerator(0, this._manifestData, this._path, this._memTable);
 
@@ -366,6 +375,9 @@ class SnapDatabase {
                         this._isConnecting = false;
                         if (process.send) process.send({ type: "snap-ready" });
                     }
+                    break;
+                case "do-compact":
+                    this._maybeFlushLog(true);
                     break;
                 case "snap-get":
                     try {
@@ -769,7 +781,7 @@ class SnapDatabase {
 process.on('message', (msg) => { // got message from master
     switch (msg.type) {
         case "snap-connect":
-            new SnapDatabase(msg.path, msg.keyType, msg.cache);
+            new SnapDatabase(msg.path, msg.keyType, msg.cache, msg.autoFlush);
             break;
     }
 });

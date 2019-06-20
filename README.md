@@ -22,6 +22,7 @@ Uses synchronous filesystem methods to only perform append writes to disk, this 
 - Zero compiling.
 - Zero configuring.
 - ACID Compliant with transaction support.
+- Optionally control compaction manually.
 - Constant time range & offset/limit queries.
 - Typescript & Babel friendly.
 - Works in NodeJS and Electron.
@@ -41,11 +42,12 @@ npm i snap-db --save
 ```ts
 import { SnapDB } from "snap-db";
 
-const db = new SnapDB(
-    "my_db", // database folder
-    "int", // key type, can be "int", "string" or "float"
-    false // enable or disable value cache
-);
+const db = new SnapDB({
+    dir: "my_db", // database folder
+    key: "int", // key type, can be "int", "string" or "float"
+    cache: false, // enable or disable value cache,
+    autoFlush: true // automatically flush the log and perform compaction
+});
 
 // wait for db to be ready
 db.ready().then(() => {
@@ -61,15 +63,16 @@ db.ready().then(() => {
 
 ## API
 
-The `SnapDB` class accepts 3 arguments in the constructor.
+The `SnapDB` class accepts a single argument which is an object that has the following properties: 
 
-### Class Arguments
+### Arguments
 
-| Argument | Type                       | Details                                                                                                              |
-|----------|----------------------------|----------------------------------------------------------------------------------------------------------------------|
-| folderName | string                     | The folder to persist data into.                |
-| keyType  | "int" \| "string" \| "float" | The database can only use one type of key at a time.  You cannot change the key after the database has been created. |
-| useCache | bool                       | If enabled, data will be loaded to/from js memory in addition to being saved to disk, allowing MUCH faster reads.             |
+| Argument | Required | Type                       | Details                                                                                                              |
+|----------|------|----------------------------|----------------------------------------------------------------------------------------------------------------------|
+| dir | true | string                     | The folder to persist data into.                |
+| key  | true | "int" \| "string" \| "float" | The database can only use one type of key at a time.  You cannot change the key after the database has been created. |
+| cache | false | bool                       | If enabled, data will be loaded to/from js memory in addition to being saved to disk, allowing MUCH faster reads at the cost of having the entire database in memory.             |
+| autoFlush | false | bool\|number | The database automatically flushes the log and memtable to SSTables once the log/memtable reaches 2MB or greater in size.  Set this to `false` to disable automatic flushes/compaction entirely.  Set this to a number (in MB) to control how large the log/memtable should get before a flush/compaction is performed.
 
 
 
@@ -120,6 +123,11 @@ Clears all keys and values from the datastore.  All other query types will fail 
 #### .close(): Promise\<void\>
 Closes the datastore, clears the keys from memory and kills the worker threads.  This isn't reversible, you have to create a new `SnapDB` instance to get things going again.
 
+#### .flushLog(): Promise\<void\>
+Forces the log to be flushed into database files and clears the memtable.  Normally the database waits until the log/memtable is 2MB or larger before flushing them.  Once the log is flushed into disk files a compaction is performed if it's needed.
+
+The log files and database files are both written to disk in a safe, robust manner so this method isn't needed for normal activity or to make writes more reliable.  You *might* use this method to perform compactions at times that are more convinient than waiting for the system to perform the compactions when the log fills up.  Also if you have `autoFlush` off you'll need this method to flush the log/memtable.
+
 #### .begin_transaction(): Promise\<void\>
 Start a database transaction.
 
@@ -162,7 +170,50 @@ You can listen for the following events:
 - Using transactions will batch writes/deletes together into a single disk seek, use them when you can.
 - Transactions cannot be nested.  Make sure you close each transaction before starting a new one.
 - Keys are kept in javascript memory for performance, in practice the size of the database you can have with SnapDB will be limited by how much memory nodejs/electron has access to.
-- Larger transactions take more memory to compact, if you run out of memory durring a transaction then break it up into smaller chunks.  Transactions in the tens of thousands should be fine, hundreds of thousands will likely be problematic.
+- Larger transactions take more memory to compact, if you run out of memory durring a transaction then break it up into smaller chunks.  Transactions in the tens of thousands of puts/deletes should be fine, hundreds of thousands will likely be problematic.
+- If you need to store millions of rows or terabytes of data RocksDB/LevelDB is a much better choice.
+
+## How LSM Tree Databases Work
+The architecture of SnapDB is heavily borrowed from LevelDB/RocksDB and shares many of their advantages and limitations.
+
+### Writes
+When you perform a write the data is loaded into an in memory cache (memtable) and appended to a log file.  Once the data is stored in the log file the write is considered to be commited to the database.  Deletes work much the same, except they write a special "tombstone" record so that we know the record is deleted and to ignore older writes of that same key.
+
+The logfile and memtable always share the same data/state.  When the database is loaded the log file is played back and it's data is saved to the memtable before the database is ready to use.
+
+#### Log Flushing/Compaction
+Compactions are only possibly performed following a log flush or when manually triggered. 
+
+Once the logfile/memtable reach a threshold in size (2MB by default) all it's data is flushed to the first of many "Levels" of database files.  Each database file is an immutable SSTable containing a bloom filter, a sorted index, and a data file containing the actual values. Database/Level files are never overwritten, modified or larger than 2MB unless database keys or values are larger than 2MB.  
+
+> A limitation to the size limiter for log/memtable involves transactions.  A single transaction, regardless of it's size, is commited entirley to the log before compaction begins.  This gaurantees that transactions are ACID but limits the transaction size to available memory.
+
+Log flushes involve rewriting all files at Level 0 and merging them with the contents of the memtable.  Once Level 0 contains more than 10MB of data one of the files in Level 0 is selected and it's contents are merged with files in Level 1 that overlap the keys in the selected Level 0 file.  After the merge all data in the selectd Level 0 file is now in Level 1.  
+
+This cycle continues with every subsequent Level, each Level being limited to a maximum of 10^L+1 MB worth of files. (Level 0 = 10MB, Level 1 = 100MB, etc)
+
+Since data is sorted into SSTables for each level, it's easy to discover overlapping keys between Levels after Level 0 and perform compactions that only handle data in the 10s of megabytes, even if the data being stored in the database is orders of magnitude larger.  Additionally compactions will merge redudant key values (only keeping the newest value) and drop tombstones if no older values for a given key exist.
+
+Each compaction normally won't touch more than one Level.  The result ends up being all log/compaction writes and reads are sequential and relatively minor in size.
+
+Once a log flush/comapction completes these actions are performed, in this order:
+
+1. A new manifest file is written describing the new Level files with the expired ones removed.
+2. The log file is deleted/emptied.
+3. The memtable is emptied. 
+4. Expired Level files are deleted.
+
+The order of operations gaurantees that if there is a crash at any point the database remains in a state that can easily be recovered from with no possiblitiy of data loss.  The absolute worst case is a compaction is performed that ends up being discarded and must be done again.
+
+Additionally, individual log writes and database files are stored with checksums to gaurantee file integrity.
+
+### Reads
+Reads are performed in this order:
+1. If cache is enabled, that's checked first.
+2. If the value/tombstone is in the memtable that's returned.
+3. The manifest file is checked to discover which Level files contain a key range that include the requested key.  The files are then sorted from newest to oldest.  Each file's bloom filter is checked against the requested key.  If the bloom filter returns a positive result, we attempt to load the data from that Level file.  If the data/tombstone isn't in the Level file we move to progressively older Level files until a result is found.  Finally, if the key isn't found in any files we return an error that the key isn't in the database.
+
+One of the main ways SnapDB is different from LevelDB/RocksDB is the database keys are stored in a sorted red/black tree to make key traversal faster.  This allows fast `.offset` and `.getCount` methods in the API that aren't typically availalbe for LevelDB/RocksDB stores.  The tradeoff is that all keys must fit in javascript memory.
 
 # MIT License
 

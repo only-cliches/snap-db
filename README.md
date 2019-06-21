@@ -14,7 +14,7 @@ Get a running database in a snap!
 
 SnapDB is a pure javascript persistent key-value store that provides ordered mapping from keys to string values. Data is persisted to disk using a Log Structure Merge Tree (LSM Tree) inspired by LevelDB / RocksDB.
 
-Uses synchronous filesystem methods to only perform append writes to disk, this puts the performance of SnapDB near the theoretical maximum write performance for ACID javascript databases.
+Uses synchronous filesystem methods to exclusively perform append writes to disk, this puts the performance of SnapDB near the theoretical maximum write performance for ACID compliant javascript databases.
 
 ## Features
 
@@ -72,7 +72,7 @@ The `SnapDB` class accepts a single argument which is an object that has the fol
 | dir | true | string                     | The folder to persist data into.                |
 | key  | true | "int" \| "string" \| "float" | The database can only use one type of key at a time.  You cannot change the key after the database has been created. |
 | cache | false | bool                       | If enabled, data will be loaded to/from js memory in addition to being saved to disk, allowing MUCH faster reads at the cost of having the entire database in memory.             |
-| autoFlush | false | bool\|number | The database automatically flushes the log and memtable to SSTables once the log/memtable reaches 2MB or greater in size.  Set this to `false` to disable automatic flushes/compaction entirely.  Set this to a number (in MB) to control how large the log/memtable should get before a flush/compaction is performed.
+| autoFlush | false | bool \| number | The database automatically flushes the log/memtable to SSTables once the log/memtable reaches 2MB or greater in size.  Set this to `false` to disable automatic flushes/compaction entirely.  Set this to a number (in MB) to control how large the log/memtable should get before a flush/compaction is performed.
 
 
 
@@ -170,50 +170,50 @@ You can listen for the following events:
 - Using transactions will batch writes/deletes together into a single disk seek, use them when you can.
 - Transactions cannot be nested.  Make sure you close each transaction before starting a new one.
 - Keys are kept in javascript memory for performance, in practice the size of the database you can have with SnapDB will be limited by how much memory nodejs/electron has access to.
-- Larger transactions take more memory to compact, if you run out of memory durring a transaction then break it up into smaller chunks.  Transactions in the tens of thousands of puts/deletes should be fine, hundreds of thousands will likely be problematic.
-- If you need to store millions of rows or terabytes of data RocksDB/LevelDB is a much better choice.
+- Larger transactions take more memory to compact, if you run out of memory during a transaction then break it up into smaller chunks.  Transactions in the tens of thousands of puts/deletes should be fine, hundreds of thousands will likely be problematic.
+- If you need to store millions of rows or terabytes of data RocksDB/LevelDB is a *much* better choice.
 
 ## How LSM Tree Databases Work
-The architecture of SnapDB is heavily borrowed from LevelDB/RocksDB and shares many of their advantages and limitations.
+The architecture of SnapDB is heavily borrowed from LevelDB/RocksDB and shares many of their advantages and limitations.  LSM Tree databases are written almost exclusively to solve a single problem: how do you prevent extremely costly random writes to the disk?  The LSM Tree structure is used to incrementally migrate and merge updates into progressively larger "Levels" using sorted immutable files.  In practice additional structures like bloom filters and red-black trees are needed to get acceptable read performance.
 
 ### Writes
-When you perform a write the data is loaded into an in memory cache (memtable) and appended to a log file.  Once the data is stored in the log file the write is considered to be commited to the database.  Deletes work much the same, except they write a special "tombstone" record so that we know the record is deleted and to ignore older writes of that same key.
+When you perform a write the data is loaded into an in memory cache (memtable) and appended to a log file.  Once the data is stored in the log file the write is considered to be committed to the database.  Deletes work much the same, except they write a special "tombstone" record so that we know the record is deleted and to ignore older writes of that same key.
 
-The logfile and memtable always share the same data/state.  When the database is loaded the log file is played back and it's data is saved to the memtable before the database is ready to use.
+Logfile writes are always append only meaning the data in the logfile is considered unsorted, however the memtable maintains a sorted mapping of all the log values to make compaction fast and efficient.
 
-#### Log Flushing/Compaction
+The logfile and memtable always share the same data/state so the memtable can be restored from the logfile at any point.
+
+#### Log Flushing & Compaction
 Compactions are only possibly performed following a log flush or when manually triggered. 
 
-Once the logfile/memtable reach a threshold in size (2MB by default) all it's data is flushed to the first of many "Levels" of database files.  Each database file is an immutable SSTable containing a bloom filter, a sorted index, and a data file containing the actual values. Database/Level files are never overwritten, modified or larger than 2MB unless database keys or values are larger than 2MB.  
+Once the logfile/memtable reach a threshold in size (2MB by default) all it's data is flushed to the first of many "Levels" of database files.  Each database file is an immutable SSTable containing a bloom filter, a sorted index, and a data file containing the actual values. Database/Level files are never overwritten, modified or larger than 2MB unless single database keys/values are larger than 2MB.  
 
-> A limitation to the size limiter for log/memtable involves transactions.  A single transaction, regardless of it's size, is commited entirely to the log before compaction begins.  This gaurantees that transactions are ACID but limits the transaction size to available memory.
+> A limitation to the size restriction for log/memtable involves transactions.  A single transaction, regardless of it's size, is committed entirely to the log before compaction begins.  This guarantees that transactions are ACID but limits the transaction size to available memory.
 
-Log flushes involve rewriting all files at Level 0 and merging them with the contents of the memtable.  Once Level 0 contains more than 10MB of data one of the files in Level 0 is selected and it's contents are merged with files in Level 1 that overlap the keys in the selected Level 0 file.  After the merge all data in the selectd Level 0 file is now in Level 1.  
+Log flushes involve loading all Level 0 files into memory, merging their contents with the memtable, then writing all new Level 0 files.  Once all Level 0 files collectively contain more than 10MB of data one of the files in Level 0 is selected and it's contents are merged with files in Level 1 that overlap the keys in the selected Level 0 file.  After the merge all data in the selected Level 0 file is now in Level 1 and the original Level 0 file is marked for deletion.  This cycle continues with every subsequent Level, each Level being limited to a maximum of 10^L+1 MB worth of files. (Level 0 = 10MB, Level 1 = 100MB, etc)
 
-This cycle continues with every subsequent Level, each Level being limited to a maximum of 10^L+1 MB worth of files. (Level 0 = 10MB, Level 1 = 100MB, etc)
+Since data is sorted into SSTables for each Level, it's easy to discover overlapping keys between Levels and perform compactions that only handle data in the 10s of megabytes, even if the database is storing dozens of gigabytes of data.  Additionally compactions will merge redundant key values (only keeping the newest value) and drop tombstones if no older values for a given key exist.
 
-Since data is sorted into SSTables for each level, it's easy to discover overlapping keys between Levels after Level 0 and perform compactions that only handle data in the 10s of megabytes, even if the data being stored in the database is orders of magnitude larger.  Additionally compactions will merge redudant key values (only keeping the newest value) and drop tombstones if no older values for a given key exist.
+Each compaction normally won't move records across more than one set of Levels.  The result ends up being all log/compaction writes and reads are sequential and relatively minor in size regardless of how large the database gets.
 
-Each compaction normally won't touch more than one Level.  The result ends up being all log/compaction writes and reads are sequential and relatively minor in size.
-
-Once a log flush/comapction completes these actions are performed, in this order:
+Once a log flush/compaction completes these actions are performed, in this order:
 
 1. A new manifest file is written describing the new Level files with the expired ones removed.
 2. The log file is deleted/emptied.
 3. The memtable is emptied. 
 4. Expired Level files are deleted.
 
-The order of operations gaurantees that if there is a crash at any point the database remains in a state that can easily be recovered from with no possiblitiy of data loss.  The absolute worst case is a compaction is performed that ends up being discarded and must be done again.
+The order of operations guarantees that if there is a crash at any point before, during or after compaction the database remains in a state that can easily be recovered from with no possibility of data loss.  The absolute worst case is a compaction is performed that ends up being discarded and must be done again.
 
-Additionally, individual log writes and database files are stored with checksums to gaurantee file integrity.
+Additionally, individual log writes and database files are stored with checksums to guarantee file and log integrity.
 
 ### Reads
 Reads are performed in this order:
 1. If cache is enabled, that's checked first.
 2. If the value/tombstone is in the memtable that's returned.
-3. The manifest file is checked to discover which Level files contain a key range that include the requested key.  The files are then sorted from newest to oldest.  Each file's bloom filter is checked against the requested key.  If the bloom filter returns a positive result, we attempt to load the data from that Level file.  If the data/tombstone isn't in the Level file we move to progressively older Level files until a result is found.  Finally, if the key isn't found in any files we return an error that the key isn't in the database.
+3. The manifest file is checked to discover which Level files contain a key range that include the requested key.  The files are then sorted from newest to oldest.  Each file's bloom filter is checked against the requested key.  If a bloom filter returns a positive result, we attempt to load data from that Level file.  If the data/tombstone isn't in the Level file we move to progressively older Level files until a result is found.  Finally, if the key isn't found in any files we return an error that the key isn't in the database.
 
-One of the main ways SnapDB is different from LevelDB/RocksDB is the database keys are stored in a sorted red/black tree to make key traversal faster.  This allows fast `.offset` and `.getCount` methods in the API that aren't typically availalbe for LevelDB/RocksDB stores.  The tradeoff is that all keys must fit in javascript memory.
+One of the main ways SnapDB is different from LevelDB/RocksDB is the database keys are stored in a red-black tree to make key traversal faster.  This allows fast `.offset` and `.getCount` methods in the API that aren't typically available for LevelDB/RocksDB stores.  The tradeoff is that all keys must fit in javascript memory.
 
 # MIT License
 

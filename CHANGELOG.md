@@ -1,7 +1,11 @@
 # TODO
 - Cluster support with support for parallel reads.
 
-# [1.0.7]
+# [1.0.8] 06-21-2019
+- Readme tweaks.
+- Added backwards compatibility for breaking change in `1.0.7`.
+
+# [1.0.7] 06-19-2019
 - *BREAKING CHANGE* the arguments for the class is now an object.
 - Small performance optimizations.
 - Fixed key type casting in compaction function.

@@ -57,18 +57,27 @@ export class SnapDB<K> {
         key: "string" | "float" | "int",
         cache?: boolean,
         autoFlush?: number|boolean
-    }) {
+    }|string, keyType?: "string" | "float" | "int", cache?: boolean) {
 
-        this._path = path.resolve(args.dir);
-        this.keyType = args.key;
-        this.memoryCache = args.cache || false;
+        let autoFlush: boolean|number = true;
+
+        if (typeof args === "string") {
+            this._path = args;
+            this.keyType = keyType || "string";
+            this.memoryCache = cache || false;
+            console.warn("This initialization for SnapDB is depreciated, please read documentation for new arguments!");
+        } else {
+            this._path = path.resolve(args.dir);
+            this.keyType = args.key;
+            this.memoryCache = args.cache || false;
+            autoFlush = typeof args.autoFlush === "undefined" ? true : args.autoFlush;
+        }
+
         this._rse = new ReallySmallEvents();
 
         this._worker = fork(path.join(__dirname, "database.js"));
         this._compactor = fork(path.join(__dirname, "compact.js"));
         this.clearCompactFiles = [];
-        
-        const autoFlush = typeof args.autoFlush === "undefined" ? true : args.autoFlush;
 
         this._worker.on("message", (msg) => { // got message from worker
             switch (msg.type) {

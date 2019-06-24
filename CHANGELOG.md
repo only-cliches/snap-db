@@ -1,5 +1,8 @@
-# TODO
-- Cluster support with support for parallel reads.
+# [1.1.0] 06-24-2019
+- Compaction now takes significantly less memory.
+- Fixed a few issues with level 0 compaction.
+- Memtable now references logfile for reads, reducing memory cost of transactions significantly.
+- Logfile is no longer loaded entirely into memory on database open, reducing memory usage significantly.
 
 # [1.0.9] 06-24-2019
 - Fixed issue with manifest delete.

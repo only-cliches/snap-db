@@ -619,7 +619,7 @@ function makeid() {
 }
 
 
-const db = new SnapDB<number>("my-db-test", "int", false);
+const db = new SnapDB<number>({dir: "my-db-test", key: "int"});
 console.time("READY");
 db.ready().then(() => {
     console.timeEnd("READY");
@@ -639,7 +639,7 @@ db.ready().then(() => {
     if (read) {
         db.getAll((key, data) => {
             ct++;
-            // console.log(key, data);
+            console.log(key, data);
         }, (err) => {
             if (err) {
                 console.log(err);
@@ -652,10 +652,9 @@ db.ready().then(() => {
             });
         }, false);
     } else {
+        let i = 0;
         db.begin_transaction().then(() => {
-            return Promise.all(arr.map(r => {
-                return db.put(r[0], r[2]);
-            }))
+            return Promise.all(arr.map(r => db.put(r[0], r[2])))
         }).then(() => {
             return db.end_transaction();
         }).then(() => {
@@ -672,11 +671,11 @@ db.ready().then(() => {
                 const time = (Date.now() - start);
                 db.getCount().then((ct) => {
                     console.log(((ct / time) * 1000).toLocaleString(), "Records Per Second (READ)");
-                    return db.close();
+                    // return db.close();
                 });
             }, false);
         }).catch((err) => {
-            console.trace()
+            console.trace(err);
         })
     }
 });*/

@@ -5,7 +5,7 @@ import { IbloomFilterObj, BloomFilter } from "./bloom";
 import { RedBlackTree } from "./rbtree";
 const wasm = require("./db.js");
 
-export const VERSION = 1.09;
+export const VERSION = 1.10;
 
 export const NULLBYTE = new Buffer([0]);
 
@@ -61,20 +61,19 @@ export const throttle = (scope: any, func: any, limit: number) => {
     };
 };
 
-export const tableGenerator = (level: number, manifest: SnapManifest, dbPath: string, index: RedBlackTree) => {
+export const tableGenerator = (level: number, manifest: SnapManifest, dbPath: string, index: RedBlackTree, done: () => void) => {
     
     const it = index.begin();
 
     const writeNextFile = () => {
 
-        
         const nextFile = manifest.inc + 1;
 
         try {
             // remove possible partial files from previous run
-            fs.unlinkSync(fileName(nextFile) + ".idx");
-            fs.unlinkSync(fileName(nextFile) + ".dta");
-            fs.unlinkSync(fileName(nextFile) + ".bom");
+            fs.unlinkSync(path.join(dbPath, fileName(nextFile) + ".idx"));
+            fs.unlinkSync(path.join(dbPath, fileName(nextFile) + ".dta"));
+            fs.unlinkSync(path.join(dbPath, fileName(nextFile) + ".bom"));
         } catch (e) {
             // no need to catch this error or care about it, happens if files don't exist.
         }
@@ -91,82 +90,145 @@ export const tableGenerator = (level: number, manifest: SnapManifest, dbPath: st
 
         let firstKey: any = undefined;
         let lastKey: any = undefined;
-        let valueData: string = "";
 
         let nextKey = it.key();
-        
-        // split files at 2 megabytes
-        while (it.valid() && totalLen < 2000000) {
+        let levelFileDta: number = -1;
+        let levelFileIdx: number = -1;
+        let levelFileBloom: number = -1;
 
-            if (firstKey === undefined) {
-                firstKey = nextKey;
-            }
-            lastKey = nextKey;
-            
-            const strKey = String(nextKey);
-            keys.push(strKey);
-            const data: string | Buffer = it.value();
-    
-            if (data === NULLBYTE) { // tombstone
-                // write index
-                indexJSON.keys[nextKey] = [-1, 0]; // tombstone
-                totalLen += strKey.length;
-    
-            } else {
-                // write index
-                indexJSON.keys[nextKey] = [dataLen, data.length];
+        const closeFile = () => {
+            if (keys.length) {
+
+                const bloom = BloomFilter.create(keys.length, 0.1);
+
+                let k = keys.length;
+                while(k--) {
+                    bloom.insert(keys[k]);
+                }
+
+                fs.fsyncSync(levelFileDta);
                 
-                // write data
-                valueData += data;
-                dataHash.update(data);
-                dataLen += data.length;
+                var fd = fs.createReadStream(path.join(dbPath, fileName(nextFile) + ".dta"));
+                var hash = crypto.createHash('sha1');
+                hash.setEncoding('hex');
 
-                totalLen += strKey.length + data.length;
+                fd.on('end', function() {
+                    hash.end();
+                    const dataHash = hash.read();
+                    // checksums for integrity
+                    fs.writeSync(levelFileDta, NULLBYTE);
+                    fs.writeSync(levelFileDta, NULLBYTE);
+                    fs.writeSync(levelFileDta, dataHash);
+                
+                    indexJSON.hash = crypto.createHash("sha1").update(JSON.stringify(indexJSON.keys)).digest("hex");
+                    fs.writeSync(levelFileIdx, JSON.stringify(indexJSON));
+                    fs.writeSync(levelFileBloom, JSON.stringify(bloom.toObject()));
+                
+                    // flush to disk
+                    fs.fsyncSync(levelFileDta);
+                    fs.fsyncSync(levelFileIdx);
+                    fs.fsyncSync(levelFileBloom);
+                    fs.closeSync(levelFileDta);
+                    fs.closeSync(levelFileIdx);
+                    fs.closeSync(levelFileBloom);
+                
+                    // update manifest
+                    if (!manifest.lvl[level]) {
+                        manifest.lvl[level] = {
+                            comp: 0,
+                            files: []
+                        };
+                    }
+                    manifest.lvl[level].files.push({ i: nextFile, range: [firstKey, lastKey] });
+                    manifest.inc = nextFile;
+                    writeNextFile();
+                });
+
+                fd.pipe(hash);
+
+            } else {
+                done();
             }
-            it.next();
-            nextKey = it.key();
         }
+        
+        const getNextKey = () => {
+            // split files at 2 megabytes
+            if(it.valid() && totalLen < 2000000) {
+                if (levelFileDta === -1) {
+                    levelFileDta =  fs.openSync(path.join(dbPath, fileName(nextFile) + ".dta"), "a+");
+                    levelFileIdx = fs.openSync(path.join(dbPath, fileName(nextFile) + ".idx"), "a+");
+                    levelFileBloom = fs.openSync(path.join(dbPath, fileName(nextFile) + ".bom"), "a+");
+                }
+    
+                if (firstKey === undefined) {
+                    firstKey = nextKey;
+                }
+    
+                lastKey = nextKey;
+                
+                const strKey = String(nextKey);
+                keys.push(strKey);
 
-        if (keys.length) {
-            const levelFileIdx = fs.openSync(path.join(dbPath, fileName(nextFile) + ".idx"), "a+");
-            const levelFileDta = fs.openSync(path.join(dbPath, fileName(nextFile) + ".dta"), "a+");
-            const levelFileBloom = fs.openSync(path.join(dbPath, fileName(nextFile) + ".bom"), "a+");
+                const data: string | Buffer | {fileID: number, offset: [number, number]} = it.value();
+        
+                if (data === NULLBYTE) { // tombstone
+                    // write index
+                    indexJSON.keys[nextKey] = [-1, 0]; // tombstone
+                    totalLen += strKey.length;
 
-            const bloom = BloomFilter.create(keys.length, 0.1);
-            let i = keys.length;
-            while(i--) {
-                bloom.insert(keys[i]);
+                    it.next();
+                    nextKey = it.key();
+                    keys.length % 250 === 0 ? setTimeout(getNextKey, 0) : getNextKey();
+        
+                } else if (typeof data !== "string" && !Buffer.isBuffer(data) && data.fileID) { // file location
+                    let dataStart = data.offset[0];
+                    let dataLength = data.offset[1];
+
+                    const readFile = fs.createReadStream(path.join(dbPath, data.fileID === -1 ? "LOG" : fileName(data.fileID) + ".dta"), {start: dataStart, end: dataStart + dataLength, autoClose: true});
+                    const writeFile = fs.createWriteStream(path.join(dbPath, fileName(nextFile) + ".dta"), {fd: levelFileDta, autoClose: false});
+                    readFile.pipe(writeFile).on("finish", () => {
+                        // write index
+                        indexJSON.keys[nextKey] = [dataLen, dataLength];
+
+                        dataLen += dataLength;
+                        totalLen += strKey.length + dataLength;
+
+                        it.next();
+                        nextKey = it.key();
+                        keys.length % 250 === 0 ? setTimeout(getNextKey, 0) : getNextKey();
+                    }).on("error", (err) => {
+                        console.error("FLUSH OR COMPACTION ERROR");
+                        console.error(err);
+                    })
+    
+                } else if (typeof data === "string") { // actual data is in index
+                    // write index
+                    indexJSON.keys[nextKey] = [dataLen, data.length];
+                    
+                    // write data
+                    fs.writeSync(levelFileDta, data);
+                    dataHash.update(data);
+                    dataLen += data.length;
+                    totalLen += strKey.length + data.length;
+
+                    it.next();
+                    nextKey = it.key();
+                    keys.length % 250 === 0 ? setTimeout(getNextKey, 0) : getNextKey();
+                } else {
+                    it.next();
+                    nextKey = it.key();
+                    keys.length % 250 === 0 ? setTimeout(getNextKey, 0) : getNextKey();
+                }  
+            } else {
+                if (keys.length) {
+                    closeFile();
+                } else {
+                    done();
+                }
             }
-
-            fs.writeSync(levelFileDta, valueData);
-            // checksums for integrity
-            fs.writeSync(levelFileDta, NULLBYTE);
-            fs.writeSync(levelFileDta, NULLBYTE);
-            fs.writeSync(levelFileDta, dataHash.digest("hex"));
-        
-            indexJSON.hash = crypto.createHash("sha1").update(JSON.stringify(indexJSON.keys)).digest("hex");
-            fs.writeSync(levelFileIdx, JSON.stringify(indexJSON));
-            fs.writeSync(levelFileBloom, JSON.stringify(bloom.toObject()));
-        
-            // flush to disk
-            fs.fsyncSync(levelFileDta);
-            fs.fsyncSync(levelFileIdx);
-            fs.fsyncSync(levelFileBloom);
-            fs.closeSync(levelFileDta);
-            fs.closeSync(levelFileIdx);
-            fs.closeSync(levelFileBloom);
-        
-            // update manifest
-            if (!manifest.lvl[level]) {
-                manifest.lvl[level] = {
-                    comp: 0,
-                    files: []
-                };
-            }
-            manifest.lvl[level].files.push({ i: nextFile, range: [firstKey, lastKey] });
-            manifest.inc = nextFile;
-            writeNextFile();
         }
+        getNextKey();
+    
     }
     writeNextFile();
 

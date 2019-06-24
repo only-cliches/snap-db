@@ -28,6 +28,10 @@ export class SnapCompactor {
         })
     }
 
+    private _indexFileCache: {
+        [fileNum: number]: { cache: SnapIndex, lastUsed: number }
+    } = {};
+
     private _getBloom(fileID: number) {
         if (this._bloomCache[fileID]) {
             return this._bloomCache[fileID];
@@ -40,6 +44,8 @@ export class SnapCompactor {
         this._manifestData = JSON.parse((fs.readFileSync(path.join(this.path, "manifest.json")) || new Buffer([])).toString("utf-8") || '{"inc": 0, "lvl": []}');
 
         let compactIndex = createRBTree();
+
+        this._indexFileCache = {};
 
         const hasOlderValues = (key, level: number): boolean => {
             let currentLevel = level + 1;
@@ -67,13 +73,17 @@ export class SnapCompactor {
         const loadFile = (fileID: number, level: number) => {
             
             const index: SnapIndex = JSON.parse(fs.readFileSync(path.join(this.path, fileName(fileID) + ".idx"), "utf-8"));
-            const data = fs.readFileSync(path.join(this.path, fileName(fileID) + ".dta"), "utf-8");
+            // const data = fs.readFileSync(path.join(this.path, fileName(fileID) + ".dta"), "utf-8");
 
             const keys = Object.keys(index.keys);
             let i = 0;
             while(i < keys.length) {
                 const key = this.keyType === "string" ? keys[i] : parseFloat(keys[i]);
-                
+
+                if (compactIndex.get(key) !== undefined) {
+                    compactIndex = compactIndex.remove(key);
+                }
+
                 if (index.keys[keys[i]][0] === -1) { // tombstone
                     // if higher level has this key, keep tombstone.  Otherwise discard it
                     if (hasOlderValues(key, level)) {
@@ -82,59 +92,64 @@ export class SnapCompactor {
                         compactIndex = compactIndex.remove(key);
                     }
                 } else {
-                    compactIndex = compactIndex.insert(key, data.slice(index.keys[key][0], index.keys[key][0] + index.keys[key][1]));
+                    // data.slice(index.keys[key][0], index.keys[key][0] + index.keys[key][1])
+                    compactIndex = compactIndex.insert(key, {fileID: fileID, offset: index.keys[keys[i]]});
                 }
 
                 i++;
             };
         }
 
+
+
         let deleteFiles: [number, number][] = [];
+
+        const finishCompact = () => {
+            // clear old files from manifest
+            deleteFiles.forEach((fileInfo) => {
+                if (this._manifestData.lvl[fileInfo[0]]) {
+                    this._manifestData.lvl[fileInfo[0]].files = this._manifestData.lvl[fileInfo[0]].files.filter((file) => {
+                        if (file.i === fileInfo[1]) {
+                            return false;
+                        }
+                        return true;
+                    });
+                }
+            });
+
+            this._bloomCache = {};
+            this._indexFileCache = {};
+
+            // Safe manifest update
+            writeManifestUpdate(this.path, this._manifestData);
+
+            if (process.send) process.send({type: "compact-done", files: deleteFiles.map(f => f[1])});
+        }
 
         if (this._manifestData.lvl && this._manifestData.lvl.length) {
 
             let i = 0;
 
-            while(i < this._manifestData.lvl.length) {
-                const lvl = this._manifestData.lvl[i];
+            const nextLevel = () => {
+
+                if(i < this._manifestData.lvl.length) {
+                    const lvl = this._manifestData.lvl[i];
+        
+                    const maxSizeMB = Math.pow(10, i + 1);
+                    let size = 0;
+                    let k = 0;
     
-                const maxSizeMB = Math.pow(10, i + 1);
-                let size = 0;
-                let k = 0;
-
-                while(k < lvl.files.length) {
-                    const file = lvl.files[k];
-                    const fName = fileName(file.i);
-                    size += (fs.statSync(path.join(this.path, fName) + ".dta").size / 1000000.0);
-                    size += (fs.statSync(path.join(this.path, fName) + ".idx").size / 1000000.0);
-                    size += (fs.statSync(path.join(this.path, fName) + ".bom").size / 1000000.0);
-                    k++;
-                }
-
-                if (size > maxSizeMB) { // compact this level
-                    if (i === 0) { // level 0 to level 1, merge all files since keys probably overlap
-
-                        // load older files first
-                        if(this._manifestData.lvl[1]) {
-                            this._manifestData.lvl[1].files.forEach((file) => {
-                                // mark all existing level 1 files for deletion
-                                deleteFiles.push([1, file.i]);
-                                loadFile(file.i, 1);
-                            });
-                        }
-
-                        // then newer files
-                        lvl.files.forEach((file) => {
-                            // mark all existing level 0 files for deletion
-                            deleteFiles.push([i, file.i]);
-                            loadFile(file.i, 0);
-                        });
-
-                        // write files to disk
-                        tableGenerator(1, this._manifestData, this.path, compactIndex);
-
-                    } else { // level 1+, only merge some files
-
+                    while(k < lvl.files.length) {
+                        const file = lvl.files[k];
+                        const fName = fileName(file.i);
+                        size += (fs.statSync(path.join(this.path, fName) + ".dta").size / 1000000.0);
+                        size += (fs.statSync(path.join(this.path, fName) + ".idx").size / 1000000.0);
+                        size += (fs.statSync(path.join(this.path, fName) + ".bom").size / 1000000.0);
+                        k++;
+                    }
+    
+                    if (size > maxSizeMB) { // compact this level
+                   
                         // loop compaction marker around
                         if (lvl.comp >= lvl.files.length) {
                             lvl.comp = 0;
@@ -177,33 +192,21 @@ export class SnapCompactor {
                         });
 
                         // write files to disk
-                        tableGenerator(i + 1, this._manifestData, this.path, compactIndex);
+                        tableGenerator(i + 1, this._manifestData, this.path, compactIndex, () => {
+                            compactIndex = createRBTree();
+                            i++;
+                            nextLevel();
+                        });
+                        
+                    } else {
+                        finishCompact();
                     }
-
-                    compactIndex = createRBTree();
+                } else {
+                    finishCompact();
                 }
-                i++;
-            };
-        }
-
-        // clear old files from manifest
-        deleteFiles.forEach((fileInfo) => {
-            if (this._manifestData.lvl[fileInfo[0]]) {
-                this._manifestData.lvl[fileInfo[0]].files = this._manifestData.lvl[fileInfo[0]].files.filter((file) => {
-                    if (file.i === fileInfo[1]) {
-                        return false;
-                    }
-                    return true;
-                });
             }
-        });
-
-        this._bloomCache = {};
-
-        // Safe manifest update
-        writeManifestUpdate(this.path, this._manifestData);
-
-        if (process.send) process.send({type: "compact-done", files: deleteFiles.map(f => f[1])});
+            nextLevel();
+        }
     }
 }
 

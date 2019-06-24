@@ -1,11 +1,10 @@
 import * as fs from "fs";
 import * as path from "path";
-import * as crypto from "crypto";
-import { IbloomFilterObj, BloomFilter } from "./bloom";
+import { IbloomFilterObj, BloomFilter, MurmurHash3 } from "./bloom";
 import { RedBlackTree } from "./rbtree";
-const wasm = require("./db.js");
+import { Sha1 } from "./sha1";
 
-export const VERSION = 1.10;
+export const VERSION = 1.11;
 
 export const NULLBYTE = new Buffer([0]);
 
@@ -80,7 +79,7 @@ export const tableGenerator = (level: number, manifest: SnapManifest, dbPath: st
     
         let dataLen = 0;
         let totalLen = 0;
-        let dataHash = crypto.createHash("sha1");
+        let dataHash = new Sha1();
     
         let indexJSON: SnapIndex = {
             keys: {},
@@ -108,19 +107,18 @@ export const tableGenerator = (level: number, manifest: SnapManifest, dbPath: st
 
                 fs.fsyncSync(levelFileDta);
                 
-                var fd = fs.createReadStream(path.join(dbPath, fileName(nextFile) + ".dta"));
-                var hash = crypto.createHash('sha1');
-                hash.setEncoding('hex');
+                let fd = fs.createReadStream(path.join(dbPath, fileName(nextFile) + ".dta"));
 
-                fd.on('end', function() {
-                    hash.end();
-                    const dataHash = hash.read();
+                fd.on("data", (chunk: Buffer) => {
+                    dataHash.update(chunk.toString("utf-8"));
+                }).on('end', () => {
+
                     // checksums for integrity
                     fs.writeSync(levelFileDta, NULLBYTE);
                     fs.writeSync(levelFileDta, NULLBYTE);
-                    fs.writeSync(levelFileDta, dataHash);
+                    fs.writeSync(levelFileDta, dataHash.hex());
                 
-                    indexJSON.hash = crypto.createHash("sha1").update(JSON.stringify(indexJSON.keys)).digest("hex");
+                    indexJSON.hash = String(MurmurHash3(0, JSON.stringify(indexJSON.keys)));
                     fs.writeSync(levelFileIdx, JSON.stringify(indexJSON));
                     fs.writeSync(levelFileBloom, JSON.stringify(bloom.toObject()));
                 
@@ -143,8 +141,6 @@ export const tableGenerator = (level: number, manifest: SnapManifest, dbPath: st
                     manifest.inc = nextFile;
                     writeNextFile();
                 });
-
-                fd.pipe(hash);
 
             } else {
                 done();

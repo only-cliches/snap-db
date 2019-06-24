@@ -607,7 +607,7 @@ export class SnapDB<K> {
 }
 
 
-/*
+
 function makeid() {
     var text = "";
     var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -678,4 +678,4 @@ db.ready().then(() => {
             console.trace(err);
         })
     }
-});*/
+});

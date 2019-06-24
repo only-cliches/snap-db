@@ -5,7 +5,7 @@ import { IbloomFilterObj, BloomFilter } from "./bloom";
 import { RedBlackTree } from "./rbtree";
 const wasm = require("./db.js");
 
-export const VERSION = 1.06;
+export const VERSION = 1.09;
 
 export const NULLBYTE = new Buffer([0]);
 

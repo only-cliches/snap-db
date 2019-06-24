@@ -63,7 +63,7 @@ describe("SnapDB Tests", () => {
             })
 
         });
-    }).timeout(10000);
+    }).timeout(20000);
 
     it("Integer: Sorted Keys", (done: MochaDone) => {
         data["int"] = data["int"].sort((a, b) => a[0] > b[0] ? 1 : -1);

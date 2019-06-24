@@ -64,11 +64,13 @@ class SnapDatabase {
     }
 
     private _getFiles() {
+
         try {
 
             if (!fs.existsSync(this._path)) {
-                fs.mkdirSync(this._path);
+                fs.mkdirSync(this._path, {recursive: true});
             }
+
             // create the log file if it's not there.
             this._logHandle = fs.openSync(path.join(this._path, "LOG"), "a+");
 
@@ -83,7 +85,12 @@ class SnapDatabase {
                 fs.closeSync(fd2);
 
                 // remove temp file
-                fs.unlinkSync(path.join(this._path, "manifest-temp.json"));
+                try {
+                    fs.unlinkSync(path.join(this._path, "manifest-temp.json"));
+                } catch (e) {
+
+                }
+                
             } else {
                 if (fs.existsSync(path.join(this._path, "manifest.json"))) {
                     this._manifestData = JSON.parse(fs.readFileSync(path.join(this._path, "manifest.json")).toString("utf-8"));
@@ -118,6 +125,10 @@ class SnapDatabase {
             }
         }
 
+        if (typeof this._memTable.get(key) !== "undefined") {
+            this._memTable = this._memTable.remove(key);
+        }
+
         this._memTable = this._memTable.insert(key, NULLBYTE);
         this._memTableSize += keyLen;
         delete this._cache[key];
@@ -137,6 +148,8 @@ class SnapDatabase {
         const keyStr = String(key);
         const valueStr = String(value);
 
+        // console.log("PUT", this._path.split("/").pop(), skiplog, key, value);
+
         if (!skiplog) {
             // write key & value to log
             fs.writeSync(this._logHandle, NULLBYTE);
@@ -151,6 +164,10 @@ class SnapDatabase {
         }
 
         // mark key in memtable
+        if (typeof this._memTable.get(key) !== "undefined") {
+            this._memTable = this._memTable.remove(key);
+        } 
+
         this._memTable = this._memTable.insert(key, value);
         this._memTableSize += keyStr.length;
         this._memTableSize += valueStr.length;
@@ -289,7 +306,11 @@ class SnapDatabase {
 
             // empty logfile
             fs.closeSync(this._logHandle);
-            fs.unlinkSync(path.join(this._path, "LOG"));
+            try {
+                fs.unlinkSync(path.join(this._path, "LOG"));
+            } catch (e) {
+
+            }
             this._logHandle = fs.openSync(path.join(this._path, "LOG"), "a+");
 
             this._maybeCompact();
@@ -309,6 +330,7 @@ class SnapDatabase {
      * @memberof SnapWorker
      */
     private _checkForMigration() {
+
         if (fs.existsSync(this._path) && !fs.lstatSync(this._path).isDirectory()) {
             console.log("Attempting to migrate from SQLite backend..");
             console.log("If this process doesn't complete remove the '-old' from your SQLite database file and try again");
@@ -553,16 +575,14 @@ class SnapDatabase {
                     // clear database
 
                     // remove all files in db folder
-                    fs.readdir(this._path, (err, files) => {
-                        if (err) throw err;
-
+                    try {
+                        const files = fs.readdirSync(this._path);
                         for (const file of files) {
-                            fs.unlink(path.join(this._path, file), err => {
-                                if (err) throw err;
-                            });
+                            fs.unlinkSync(path.join(this._path, file));
                         }
-                    });
+                    } catch(e) {
 
+                    }
                     // setup new manifest and log
                     this._getFiles();
 
@@ -607,7 +627,7 @@ class SnapDatabase {
      * @memberof SnapDB
      */
     private _loadKeys() {
-
+        
         const parseLogLine = (line: string): any[] => {
             // log record line:
             // keyKength,valueLength,key value hash
@@ -686,7 +706,7 @@ class SnapDatabase {
             // import logfile into merge tree
             let events: string[] = [];
             let buffer = "";
-            let i = 1;
+            let i = 0;
             while (i < LOGFILE.length) {
                 if (LOGFILE[i] === 0) {
                     events.push(buffer);
@@ -701,7 +721,7 @@ class SnapDatabase {
 
             let tx: number = 0;
             let batches: string[] = [];
-            events.forEach((event) => {
+            events.filter(v => v && v.length).forEach((event) => {
                 if (event.indexOf("TX-START") === 0) { // start transaction
                     // clear previouse transaction data
                     tx = parseInt(event.replace("TX-START-", ""));
@@ -711,11 +731,12 @@ class SnapDatabase {
                     if (endTx === tx) { // commit batch
                         batches.forEach((bEvent) => {
                             let rowData = parseLogLine(bEvent);
+                            const key = this.keyType === "string" ? rowData[0] : parseFloat(rowData[0]);
                             if (rowData.length) {
                                 if (rowData[1] === -1) {
-                                    this._del(rowData[0], true);
+                                    this._del(key, true);
                                 } else {
-                                    this._put(rowData[0], rowData[1], true);
+                                    this._put(key, rowData[1], true);
                                 }
                             }
                         });
@@ -725,11 +746,13 @@ class SnapDatabase {
                 } else { // normal record
                     if (tx === 0) { // not in transaction
                         let rowData = parseLogLine(event);
+
+                        const key = this.keyType === "string" ? rowData[0] : parseFloat(rowData[0]);
                         if (rowData.length) {
                             if (rowData[1] === -1) {
-                                this._del(rowData[0], true);
+                                this._del(key, true);
                             } else {
-                                this._put(rowData[0], rowData[1], true);
+                                this._put(key, rowData[1], true);
                             }
                         }
                     } else { // in transaction
@@ -744,6 +767,8 @@ class SnapDatabase {
 
             // flush logs if needed
             this._maybeFlushLog();
+
+            if (process.send) process.send({ type: "snap-ready" });
         }
     }
 

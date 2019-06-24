@@ -1,6 +1,12 @@
 # TODO
 - Cluster support with support for parallel reads.
 
+# [1.0.9] 06-24-2019
+- Fixed issue with manifest delete.
+- Fixed issue with opening existing databases.
+- Fixed issue with log restoring.
+- Fixed issue with memtable updating.
+
 # [1.0.8] 06-21-2019
 - Readme tweaks.
 - Added backwards compatibility for breaking change in `1.0.7`.

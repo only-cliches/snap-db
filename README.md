@@ -65,18 +65,19 @@ db.ready().then(() => {
 
 The `SnapDB` class accepts a single argument which is an object that has the following properties: 
 
-### Arguments
+### Object Properties
 
-| Argument | Required | Type                       | Details                                                                                                              |
+| Property | Required | Type                       | Details                                                                                                              |
 |----------|------|----------------------------|----------------------------------------------------------------------------------------------------------------------|
 | dir | true | string                     | The folder to persist data into.                |
 | key  | true | "int" \| "string" \| "float" | The database can only use one type of key at a time.  You cannot change the key after the database has been created. |
-| cache | false | bool                       | If enabled, data will be loaded to/from js memory in addition to being saved to disk, allowing MUCH faster reads at the cost of having the entire database in memory.             |
+| mainThread | false | bool                       | If `true` database actions will be ran in single thread mode.   In single thread mode write and read performance is more than doubled, but database actions will block your NodeJS application.  Blocking likely won't be noticeable if you always have small (under 1KB) keys and values.  Compaction is always done in a different thread.    |
+| cache | false | bool                       | If `true`, data will be loaded to/from js memory in addition to being saved to disk, allowing MUCH faster reads at the cost of having the entire database in memory.             |
 | autoFlush | false | bool \| number | The database automatically flushes the log/memtable to SSTables once the log/memtable reaches 2MB or greater in size.  Set this to `false` to disable automatic flushes/compaction entirely.  Set this to a number (in MB) to control how large the log/memtable should get before a flush/compaction is performed.
 
 
 
-### Properties
+### Class Properties
 
 #### .version: number
 The current version of SnapDB being used.
@@ -88,13 +89,13 @@ This is `true` when the database is performing compaction in the background, `fa
 This is `true` when a transaction is active, `false` otherwise.
 
 
-### Methods
+### Class Methods
 
 #### .ready():Promise\<void\>
-Call on database initialization to know when the database is ready.
+Call on database initialization to know when the database is ready.  Will return immediately if the database is already ready.
 
 #### .put(key: any, data: string): Promise\<void\>
-Puts data into the database at the provided key.
+Puts data into the database at the provided key.  Replaces entirely whatever value was there before.
 
 #### .get(key: any):Promise\<string\>
 Used to get the value of a single key.
@@ -102,31 +103,34 @@ Used to get the value of a single key.
 #### .delete(key: any): Promise\<void\>
 Deletes a key and it's value from the database.
 
-#### .getAllKeys(onKey: (key: any) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
-Gets all the keys in the database, use the callback functions to capture the data.  Can optionally return the keys in reverse.  This is orders of magnitude faster than the `getAll` method.
-
 #### .getAll(onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
 Gets all the keys & values in the database, use the callback functions to capture the data. Can optionally return the keys/values in reverse order.
+
+#### .getAllKeys(onKey: (key: any) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
+Gets all the keys in the database, use the callback functions to capture the data.  Can optionally return the keys in reverse order.  This is orders of magnitude faster than the `getAll` method.
 
 #### .range(lower: any, higher: any, onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean)
 Gets a range of rows between the provided lower and upper values.  Can optionally return the results in reverse.  
 
 #### .offset(offset: number, limit: number, onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean)
-Gets a section of rows provided the offset and limit you'd like.  Can optionally return the results in reverse from the bottom of the key list.
+Gets a section of rows provided the offset and limit you'd like.  Can optionally return the results in reverse order from the bottom of the list.
 
 #### .getCount(): Promise\<number\>
 Gets the total number of records in the database.  This uses a *very fast* lookup method.
 
 #### .empty(): Promise\<void\>
-Clears all keys and values from the datastore.  All other query types will fail while the database is being emptied, wait for this to complete before attempting to write new data to the database.
+Clears all keys and values from the database.  All other query types will fail while the database is being emptied, wait for this to complete before attempting to write new data to the database.
 
 #### .close(): Promise\<void\>
-Closes the datastore, clears the keys from memory and kills the worker threads.  This isn't reversible, you have to create a new `SnapDB` instance to get things going again.
+Closes the database, clears the keys from memory and kills the worker threads.  This isn't reversible, you have to create a new `SnapDB` instance to get things going again.
 
 #### .flushLog(): Promise\<void\>
 Forces the log to be flushed into database files and clears the memtable.  Normally the database waits until the log/memtable is 2MB or larger before flushing them.  Once the log is flushed into disk files a compaction is performed if it's needed.
 
-The log files and database files are both written to disk in a safe, robust manner so this method isn't needed for normal activity or to make writes more reliable.  You *might* use this method to perform compactions at times that are more convinient than waiting for the system to perform the compactions when the log fills up.  Also if you have `autoFlush` off you'll need this method to flush the log/memtable.
+The log files and database files are both written to disk in a safe, robust manner so this method isn't needed for normal activity or to make writes more reliable.  Good reasons to use this method include:
+
+- Manually perform compactions at times that are more convenient than waiting for the system to perform the compactions when the log fills up.  
+- If you have `autoFlush` off you'll need this method to flush the log/memtable periodically.
 
 #### .begin_transaction(): Promise\<void\>
 Start a database transaction.
@@ -169,8 +173,8 @@ You can listen for the following events:
 - Keys and values can technically be almost any size, but try to keep them under 10 megabytes.
 - Using transactions will batch writes/deletes together into a single disk seek, use them when you can.
 - Transactions cannot be nested.  Make sure you close each transaction before starting a new one.
-- Keys are kept in javascript memory for performance, in practice the size of the database you can have with SnapDB will be limited by how much memory nodejs/electron has access to.
-- Larger transactions take more memory to compact, if you run out of memory during a transaction then break it up into smaller chunks.  Transactions in the tens of thousands of puts/deletes should be fine, hundreds of thousands will likely be problematic.
+- Keys are kept in javascript memory for performance, in practice the size of the database you can have with SnapDB will be limited by how much memory nodejs/electron has access to and how much space your keys occupy.
+- Larger transactions take more memory to compact, if you run out of memory during a transaction then break it up into smaller chunks.  Transactions in the tens of megabytes or 10s of thousands of rows should bine, hundreds of thousands of rows or hundreds of megabytes will likely be problematic.
 - If you need to store millions of rows or terabytes of data RocksDB/LevelDB is a *much* better choice.
 
 ## How LSM Tree Databases Work

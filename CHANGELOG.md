@@ -1,3 +1,9 @@
+# [1.1.1] 07-01-2019
+- **BREAKING CHANGE** Removed old WASM code entirely.  If you're migrating from SQLite based install you'll have to install an older version first to migrate.
+- Compaction will now loop until all levels are within the desired limits.
+- More complete handling of different states of manifest.json files.
+- Added optional single threaded mode for improved performance at the cost of blocking behavior.
+
 # [1.1.0] 06-24-2019
 - Compaction now takes significantly less memory.
 - Fixed a few issues with level 0 compaction.

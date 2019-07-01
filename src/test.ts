@@ -12,9 +12,9 @@ function makeid() {
     return text;
 }
 
-const db_str = new SnapDB({dir: "testDB1", key: "string"});
-const db_int = new SnapDB({dir: "testDB2", key: "int"});
-const db_flt = new SnapDB({dir: "testDB3", key: "float"});
+const db_str = new SnapDB({dir: "testDB1", key: "string", mainThread: true});
+const db_int = new SnapDB({dir: "testDB2", key: "int", mainThread: true});
+const db_flt = new SnapDB({dir: "testDB3", key: "float", mainThread: true});
 
 let data: {
     [key: string]: [any, any][];

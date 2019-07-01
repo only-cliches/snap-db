@@ -1,8 +1,9 @@
-var level = require('level');
-var rimraf = require("rimraf");
+const level = require('level');
+const rimraf = require("rimraf");
 const fs = require("fs");
+const path = require("path");
 const SnapDB = require("../bin/index.js").SnapDB;
-
+const diskDB = require('diskdb');
 
 function makeid(length) {
     var text = "";
@@ -50,11 +51,36 @@ const testLevelDB = (sampleData) => {
     })
 }
 
+const testDiskDB = (sampleData) => {
+    return new Promise((res, rej) => {
+        const dbName = makeid(10);
+
+        fs.mkdirSync(path.join(__dirname, dbName));
+        
+        var db = diskDB.connect(path.join(__dirname, dbName), ['testing']);
+
+        let start = Date.now();
+        db.testing.save(sampleData.sort((a, b) => a[0] < b[0] ? 1 : -1).map(a => ({key: a[0], value: [1]})));
+        let writeSpeed = Math.round(sampleData.length / (Date.now() - start) * 1000);
+        start = Date.now();
+
+        const rows = db.testing.find();
+        let end = Date.now();
+
+        rimraf.sync(path.join(__dirname, dbName));
+
+        res([
+            Math.round(rows.length / (end - start) * 1000),
+            writeSpeed
+        ]);
+    })
+}
+
 const testSnapDB = (sampleData) => {
     return new Promise((res, rej) => {
         const dbName = makeid(10);
         
-        var db = new SnapDB(dbName, "string");
+        var db = new SnapDB({dir: dbName, key: "string", cache: true, mainThread: true});
         let start = 0;
         let writeSpeed = 0;
         db.ready().then(() => {
@@ -86,13 +112,31 @@ const testSnapDB = (sampleData) => {
     })
 }
 
-// make 100,000 records for both databases
+// make 10,000 records for both databases
 
 let data = [];
 for (let i = 0; i < 10000; i++) {
     data.push([makeid(10), makeid()]);
 }
 const average = (array) => Math.round(array.reduce((a, b) => a + b) / array.length);
+
+let results3 = [];
+const testDiskDBMany = () => {
+    testDiskDB(data.slice()).then((result) => {
+        results3.push(result);
+        if (results3.length < 5) {
+            testDiskDBMany();
+        } else {
+            
+            const writes = results3.map(s => s[1]);
+            const reads = results3.map(s => s[0]);
+            console.log("DiskDB");
+            console.log(average(writes).toLocaleString(), "op/s (WRITE)");
+            console.log(average(reads).toLocaleString(), "op/s (READ)");
+        }
+    })
+}
+
 let results2 = [];
 const testSnapDBMany = () => {
     testSnapDB(data.slice()).then((result) => {
@@ -126,7 +170,7 @@ const testLevelMany = () => {
             const reads = results.map(s => s[0]);
             console.log(average(writes).toLocaleString(), "op/s (WRITE)");
             console.log(average(reads).toLocaleString(), "op/s (READ)");
-            // testSnapDBMany();
+            testDiskDBMany();
         }
     })
 }

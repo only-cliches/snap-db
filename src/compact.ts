@@ -129,7 +129,20 @@ export class SnapCompactor {
         if (this._manifestData.lvl && this._manifestData.lvl.length) {
 
             let i = 0;
+            let didCompact = false;
 
+            // loop compaction until all levels are within limits
+            const maybeFinishCompact = () => {
+                if (didCompact) {
+                    i = 0;
+                    didCompact = false;
+                    nextLevel();
+                } else {
+                    finishCompact();
+                }
+            }
+
+            // compact a specific level
             const nextLevel = () => {
 
                 if(i < this._manifestData.lvl.length) {
@@ -149,7 +162,8 @@ export class SnapCompactor {
                     }
     
                     if (size > maxSizeMB) { // compact this level
-                   
+                        
+                        didCompact = true;
                         // loop compaction marker around
                         if (lvl.comp >= lvl.files.length) {
                             lvl.comp = 0;
@@ -199,13 +213,15 @@ export class SnapCompactor {
                         });
                         
                     } else {
-                        finishCompact();
+                        maybeFinishCompact();
                     }
                 } else {
-                    finishCompact();
+                    maybeFinishCompact();
                 }
             }
             nextLevel();
+        } else {
+            finishCompact();
         }
     }
 }

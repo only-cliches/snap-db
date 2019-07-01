@@ -3,8 +3,7 @@ import { fork, ChildProcess } from "child_process";
 import { VERSION, fileName as fNameFN } from "./common";
 import { ReallySmallEvents } from "./rse";
 import * as fs from "fs";
-import { Agent } from "http";
-
+import { SnapDatabase } from "./database";
 
 const messageBuffer: {
     [messageId: string]: (values: string[]) => void;
@@ -41,6 +40,7 @@ export class SnapDB<K> {
     private _compactId: string;
     public keyType: "string" | "float" | "int";
     public memoryCache?: boolean;
+    private _database: SnapDatabase;
 
     /**
      *Creates an instance of SnapDB.
@@ -48,7 +48,8 @@ export class SnapDB<K> {
      *         dir: string,
      *         key: "string" | "float" | "int",
      *         cache?: boolean,
-     *         autoFlush?: number|boolean
+     *         autoFlush?: number|boolean,
+     *         singleThread?: boolean
      *     })} args
      * @memberof SnapDB
      */
@@ -56,101 +57,105 @@ export class SnapDB<K> {
         dir: string,
         key: "string" | "float" | "int",
         cache?: boolean,
-        autoFlush?: number|boolean
-    }|string, keyType?: "string" | "float" | "int", cache?: boolean) {
+        autoFlush?: number | boolean,
+        mainThread?: boolean
+    } | string, keyType?: "string" | "float" | "int", cache?: boolean) {
 
-        let autoFlush: boolean|number = true;
+        let autoFlush: boolean | number = true;
+        this._onCompactorMessage = this._onCompactorMessage.bind(this);
 
         if (typeof args === "string") {
             this._path = args;
             this.keyType = keyType || "string";
             this.memoryCache = cache || false;
+            this._worker = fork(path.join(__dirname, "database.js"));
             console.warn("This initialization for SnapDB is depreciated, please read documentation for new arguments!");
+
         } else {
             this._path = path.resolve(args.dir);
             this.keyType = args.key;
             this.memoryCache = args.cache || false;
             autoFlush = typeof args.autoFlush === "undefined" ? true : args.autoFlush;
+            if (args.mainThread) {
+                this._database = new SnapDatabase(this._path, this.keyType, this.memoryCache, autoFlush, false);
+            } else {
+                this._worker = fork(path.join(__dirname, "database.js"));
+            }
         }
 
         this._rse = new ReallySmallEvents();
-
-        this._worker = fork(path.join(__dirname, "database.js"));
         this._compactor = fork(path.join(__dirname, "compact.js"));
         this.clearCompactFiles = [];
 
-        this._worker.on("message", (msg) => { // got message from worker
-            switch (msg.type) {
-                case "snap-ready":
-                    this._isReady = true;
-                    break;
-                case "snap-compact":
-                    this.isCompacting = true;
-                    this._compactor.send("do-compact");
-                    if (this._hasEvents) this._rse.trigger("compact-start", {target: this, time: Date.now()});
-                    break;
-                case "snap-compact-done":
-                    this.isCompacting = false;
-                    // safe to remove old files now
-                    this.clearCompactFiles.forEach((fileID) => {
-                        try {
-                            fs.unlinkSync(path.join(this._path, fNameFN(fileID) + ".dta"));
-                            fs.unlinkSync(path.join(this._path, fNameFN(fileID) + ".idx"));
-                            fs.unlinkSync(path.join(this._path, fNameFN(fileID) + ".bom"));
-                        } catch(e) {
+        if (this._worker) { // multi threaded mode
 
+            this._worker.on("message", (msg) => { // got message from worker
+                switch (msg.type) {
+                    case "snap-ready":
+                        this._isReady = true;
+                        break;
+                    case "snap-compact":
+                        this.isCompacting = true;
+                        this._compactor.send("do-compact");
+                        if (this._hasEvents) this._rse.trigger("compact-start", { target: this, time: Date.now() });
+                        break;
+                    case "snap-compact-done":
+                        this._cleanupCompaction();
+                        break;
+                    case "snap-res":
+                        if (msg.event && this._hasEvents) {
+                            this._rse.trigger(msg.event, { target: this, time: Date.now(), data: msg.data });
                         }
-                    });
-                    this.clearCompactFiles = [];
-                    if (this._hasEvents) this._rse.trigger("compact-end", {target: this, time: Date.now()});
-                    if (this._compactId && messageBuffer[this._compactId]) {
-                        messageBuffer[this._compactId].apply(null, [undefined]);
-                        delete messageBuffer[this._compactId];
-                        this._compactId = "";
-                    }
-                    break;
-                case "snap-res":
-                    if (msg.event && this._hasEvents) {
-                        this._rse.trigger(msg.event, {target: this, time: Date.now(), data: msg.data});
-                    }
-                    messageBuffer[msg.id].apply(null, [msg.data]);
-                    break;
-                case "snap-res-done":
-                    if (msg.event && this._hasEvents) {
-                        this._rse.trigger(msg.event, {target: this, time: Date.now(), data: msg.data});
-                    }
-                    if (msg.event === "tx-start") {
-                        this.isTx = true;
-                    }
-                    if (msg.event === "tx-end") {
-                        this.isTx = false;
-                    }
-                    messageBuffer[msg.id].apply(null, [msg.data]);
-                    delete messageBuffer[msg.id];
-                    break;
-                case "snap-clear-done":
+                        messageBuffer[msg.id].apply(null, [msg.data]);
+                        break;
+                    case "snap-res-done":
+                        if (msg.event && this._hasEvents) {
+                            this._rse.trigger(msg.event, { target: this, time: Date.now(), data: msg.data });
+                        }
+                        if (msg.event === "tx-start") {
+                            this.isTx = true;
+                        }
+                        if (msg.event === "tx-end") {
+                            this.isTx = false;
+                        }
+                        messageBuffer[msg.id].apply(null, [msg.data]);
+                        delete messageBuffer[msg.id];
+                        break;
+                    case "snap-clear-done":
+                        this._isReady = true;
+    
+                        this._compactor = fork(path.join(__dirname, "compact.js"));
+                        this._compactor.on("message", this._onCompactorMessage);
+
+                        messageBuffer[msg.id].apply(null, [msg.data]);
+                        delete messageBuffer[msg.id];
+                        if (this._hasEvents) this._rse.trigger("clear", { target: this, time: Date.now() });
+                        break;
+                    case "snap-close-done":
+                        this._isReady = false;
+                        this._compactor.kill();
+                        this._worker.kill();
+                        messageBuffer[msg.id].apply(null, [msg.data]);
+                        delete messageBuffer[msg.id];
+                        if (this._hasEvents) this._rse.trigger("close", { target: this, time: Date.now() });
+                        break;
+                }
+            });
+            this._worker.send({ type: "snap-connect", path: this._path, cache: this.memoryCache, keyType: this.keyType, autoFlush: autoFlush });
+        } else {
+            const checkReady = () => {
+                if (this._database.ready) {
                     this._isReady = true;
-                    messageBuffer[msg.id].apply(null, [msg.data]);
-                    delete messageBuffer[msg.id];
-                    if (this._hasEvents) this._rse.trigger("clear", {target: this, time: Date.now()});
-                    break;
-                case "snap-close-done":
-                    this._isReady = false;
-                    this._compactor.kill();
-                    this._worker.kill();
-                    messageBuffer[msg.id].apply(null, [msg.data]);
-                    delete messageBuffer[msg.id];
-                    if (this._hasEvents) this._rse.trigger("close", {target: this, time: Date.now()});
-                    break;
+                } else {
+                    setTimeout(() => {
+                        checkReady();
+                    }, 100);
+                }
             }
-        });
-        this._compactor.on("message", (msg) => {
-            if (msg.type === "compact-done") {
-                this.clearCompactFiles = msg.files;
-                this._worker.send({type: "compact-done"});
-            }
-        });
-        this._worker.send({ type: "snap-connect", path: this._path, cache: this.memoryCache, keyType: this.keyType, autoFlush: autoFlush });
+            checkReady();
+        }
+
+        this._compactor.on("message", this._onCompactorMessage);
         this._compactor.send({ type: "snap-compact", path: this._path, cache: this.memoryCache, keyType: this.keyType, autoFlush: autoFlush });
     }
 
@@ -177,33 +182,56 @@ export class SnapDB<K> {
         this._rse.off(event, callback);
     }
 
+    private _cleanupCompaction() {
+        this.isCompacting = false;
+        // safe to remove old files now
+        this.clearCompactFiles.forEach((fileID) => {
+            try {
+                fs.unlinkSync(path.join(this._path, fNameFN(fileID) + ".dta"));
+                fs.unlinkSync(path.join(this._path, fNameFN(fileID) + ".idx"));
+                fs.unlinkSync(path.join(this._path, fNameFN(fileID) + ".bom"));
+            } catch (e) {
+
+            }
+        });
+        this.clearCompactFiles = [];
+        if (this._hasEvents) this._rse.trigger("compact-end", { target: this, time: Date.now() });
+        if (this._compactId && messageBuffer[this._compactId]) {
+            messageBuffer[this._compactId].apply(null, [undefined]);
+            delete messageBuffer[this._compactId];
+            this._compactId = "";
+        }
+    }
+
     /**
      * Forces the log to be flushed to disk files, possibly causing a compaction.
      *
      * @returns {Promise<any>}
      * @memberof SnapDB
      */
-    public flushLog():Promise<any> {
+    public flushLog(): Promise<any> {
         return new Promise((res, rej) => {
             if (this.isCompacting === true) {
                 rej("Already compacting!");
                 return;
             }
             this.isCompacting = true;
-            this._worker.send({type: "do-compact"});
-
-            let msgId = rand();
-            while (messageBuffer[msgId]) {
-                msgId = rand();
+    
+            if (this._worker) {
+                this._worker.send({ type: "do-compact" });
+            } else {
+                this._database.flushLog(true);
+                this._compactor.send("do-compact");
             }
-            this._compactId = msgId;
-            messageBuffer[msgId] = (data) => {
-                if (data[0]) {
-                    rej(data[0]);
+
+            const checkDone = () => {
+                if (this.isCompacting) {
+                    setTimeout(checkDone, 100);
                 } else {
-                    res(data[1]);
+                    res();
                 }
             }
+            checkDone();
         })
     }
 
@@ -217,7 +245,7 @@ export class SnapDB<K> {
         return new Promise((res, rej) => {
             const checkReady = () => {
                 if (this._isReady) {
-                    this._rse.trigger("ready", {target: this, time: Date.now()});
+                    this._rse.trigger("ready", { target: this, time: Date.now() });
                     res();
                 } else {
                     setTimeout(checkReady, 100);
@@ -227,6 +255,15 @@ export class SnapDB<K> {
         });
     }
 
+    private _msgID(cb: (data: any) => void) {
+        let msgId = rand();
+        while (messageBuffer[msgId]) {
+            msgId = rand();
+        }
+
+        messageBuffer[msgId] = cb;
+        return msgId;
+    }
 
     public get(key: K): Promise<string> {
         return new Promise((res, rej) => {
@@ -234,20 +271,24 @@ export class SnapDB<K> {
                 rej("Database not ready!");
                 return;
             }
-            let msgId = rand();
-            while (messageBuffer[msgId]) {
-                msgId = rand();
-            }
-
-            messageBuffer[msgId] = (data) => {
-                if (data[0]) {
-                    rej(data[0]);
-                } else {
-                    res(data[1]);
+            if (this._worker) {
+                const msgId = this._msgID((data) => {
+                    if (data[0]) {
+                        rej(data[0]);
+                    } else {
+                        res(data[1]);
+                    }
+                })
+    
+                this._worker.send({ type: "snap-get", key: key, id: msgId });
+            } else {
+                try {
+                    res(this._database.get(key));
+                } catch(e) {
+                    rej(e);
                 }
             }
 
-            this._worker.send({ type: "snap-get", key: key, id: msgId });
         });
     }
 
@@ -264,20 +305,24 @@ export class SnapDB<K> {
                 rej("Database not ready!");
                 return;
             }
-            let msgId = rand();
-            while (messageBuffer[msgId]) {
-                msgId = rand();
-            }
-
-            messageBuffer[msgId] = (data) => {
-                if (data[0]) {
-                    rej(data[0]);
-                } else {
-                    res(data[1]);
+            if (this._worker) {
+                const msgId = this._msgID((data) => {
+                    if (data[0]) {
+                        rej(data[0]);
+                    } else {
+                        res(data[1]);
+                    }
+                })
+    
+                this._worker.send({ type: "snap-del", key: key, id: msgId });
+            } else {
+                try {
+                    res(this._database.delete(key));
+                } catch(e) {
+                    rej(e);
                 }
             }
 
-            this._worker.send({ type: "snap-del", key: key, id: msgId });
         });
     }
 
@@ -296,26 +341,31 @@ export class SnapDB<K> {
                 rej("Database not ready!");
                 return;
             }
-            let msgId = rand();
-            while (messageBuffer[msgId]) {
-                msgId = rand();
-            }
-
-            messageBuffer[msgId] = (data) => {
-                if (data[0]) {
-                    rej(data[0]);
-                } else {
-                    res(data[1]);
-                }
-            }
-
             const parseKey = {
                 "string": (k) => String(k),
                 "float": (k) => isNaN(k) || k === null ? 0 : parseFloat(k),
-                "int":  (k) => isNaN(k) || k === null ? 0 : parseInt(k)
+                "int": (k) => isNaN(k) || k === null ? 0 : parseInt(k)
             };
 
-            this._worker.send({ type: "snap-put", key: parseKey[this.keyType](key), value: data, id: msgId });
+            if (this._worker) {
+                const msgId = this._msgID((data) => {
+                    if (data[0]) {
+                        rej(data[0]);
+                    } else {
+                        res(data[1]);
+                    }
+                })
+    
+                this._worker.send({ type: "snap-put", key: parseKey[this.keyType](key), value: data, id: msgId });
+            } else {
+
+                try {
+                    res(this._database.put(parseKey[this.keyType](key), data));
+                } catch(e) {
+                    rej(e);
+                }
+            }
+
         });
     }
 
@@ -333,20 +383,21 @@ export class SnapDB<K> {
             return;
         }
 
-        let msgId = rand();
-        while (messageBuffer[msgId]) {
-            msgId = rand();
+        if (this._worker) {
+            const msgId = this._msgID((data) => {
+                if (data[0] === "response") {
+                    onRecord(data[1] as any);
+                } else {
+                    onComplete();
+                }
+            })
+    
+            this._worker.send({ type: "snap-get-all-keys", id: msgId, reverse });
+        } else {
+            this._database.getAllKeys(onRecord, onComplete, reverse || false);
         }
 
-        messageBuffer[msgId] = (data) => {
-            if (data[0] === "response") {
-                onRecord(data[1] as any);
-            } else {
-                onComplete();
-            }
-        }
 
-        this._worker.send({ type: "snap-get-all-keys", id: msgId, reverse });
     }
 
     /**
@@ -362,19 +413,25 @@ export class SnapDB<K> {
                 return;
             }
 
-            let msgId = rand();
-            while (messageBuffer[msgId]) {
-                msgId = rand();
-            }
+            if (this._worker) {
+                const msgId = this._msgID((data) => {
+                    if (data[0]) {
+                        rej(data[0]);
+                    } else {
+                        res();
+                    }
+                })
 
-            messageBuffer[msgId] = (data) => {
-                if (data[0]) {
-                    rej(data[0]);
-                } else {
-                    res();
+                this._worker.send({ type: "snap-start-tx", id: msgId });
+            } else {
+                try {
+                    res(this._database.startTX());
+                    this.isTx = true;
+                } catch(e) {
+                    rej(e);
                 }
+                
             }
-            this._worker.send({ type: "snap-start-tx", id: msgId });
         });
     }
 
@@ -391,19 +448,26 @@ export class SnapDB<K> {
                 return;
             }
 
-            let msgId = rand();
-            while (messageBuffer[msgId]) {
-                msgId = rand();
-            }
+            if (this._worker) {
+                const msgId = this._msgID((data) => {
+                    if (data[0]) {
+                        rej(data[0]);
+                    } else {
+                        res();
+                    }
+                })
 
-            messageBuffer[msgId] = (data) => {
-                if (data[0]) {
-                    rej(data[0]);
-                } else {
-                    res();
+                this._worker.send({ type: "snap-end-tx", id: msgId });
+            } else {
+                try {
+                    res(this._database.endTX());
+                    this.isTx = false;
+                } catch(e) {
+                    rej(e);
                 }
             }
-            this._worker.send({ type: "snap-end-tx", id: msgId });
+
+ 
         });
 
     }
@@ -420,20 +484,23 @@ export class SnapDB<K> {
                 rej("Database not ready!");
                 return;
             }
-            let msgId = rand();
-            while (messageBuffer[msgId]) {
-                msgId = rand();
-            }
-
-            messageBuffer[msgId] = (data) => {
-                if (data[0]) {
-                    rej(data[0]);
-                } else {
-                    res(parseInt(data[1]));
+            if (this._worker) {
+                const msgId = this._msgID((data) => {
+                    if (data[0]) {
+                        rej(data[0]);
+                    } else {
+                        res(parseInt(data[1]));
+                    }
+                });
+    
+                this._worker.send({ type: "snap-count", id: msgId });
+            } else {
+                try {
+                    res(this._database.getCount());
+                } catch(e) {
+                    rej(e);
                 }
             }
-
-            this._worker.send({ type: "snap-count", id: msgId });
         });
     }
 
@@ -450,21 +517,19 @@ export class SnapDB<K> {
             onComplete("Database not ready!");
             return;
         }
-
-        let msgId = rand();
-        while (messageBuffer[msgId]) {
-            msgId = rand();
+        if (this._worker) {
+            const msgId = this._msgID((data) => {
+                if (data[0] === "response") {
+                    onRecord(data[1] as any, data[2]);
+                } else {
+                    onComplete();
+                }
+            })
+    
+            this._worker.send({ type: "snap-get-all", id: msgId, reverse });
+        } else {
+            this._database.getAll(onRecord, onComplete, reverse || false);
         }
-
-        messageBuffer[msgId] = (data) => {
-            if (data[0] === "response") {
-                onRecord(data[1] as any, data[2]);
-            } else {
-                onComplete();
-            }
-        }
-
-        this._worker.send({ type: "snap-get-all", id: msgId, reverse });
     }
 
     /**
@@ -483,21 +548,19 @@ export class SnapDB<K> {
             return;
         }
 
-        let msgId = rand();
-        while (messageBuffer[msgId]) {
-            msgId = rand();
+        if (this._worker) {
+            const msgId = this._msgID((data) => {
+                if (data[0] === "response") {
+                    onRecord(data[1] as any, data[2]);
+                } else {
+                    onComplete();
+                }
+            })
+    
+            this._worker.send({ type: "snap-get-range", id: msgId, lower, higher, reverse });
+        } else {
+            this._database.getRange(lower, higher, onRecord, onComplete, reverse || false);
         }
-
-        messageBuffer[msgId] = (data) => {
-            if (data[0] === "response") {
-                onRecord(data[1] as any, data[2]);
-            } else {
-                onComplete();
-            }
-        }
-
-        this._worker.send({ type: "snap-get-range", id: msgId, lower, higher, reverse });
-
     }
 
     /**
@@ -517,20 +580,19 @@ export class SnapDB<K> {
             return;
         }
 
-        let msgId = rand();
-        while (messageBuffer[msgId]) {
-            msgId = rand();
+        if (this._worker) {
+            const msgId = this._msgID((data) => {
+                if (data[0] === "response") {
+                    onRecord(data[1] as any, data[2]);
+                } else {
+                    onComplete();
+                }
+            })
+    
+            this._worker.send({ type: "snap-get-offset", id: msgId, offset, limit, reverse });
+        } else {
+            this._database.getOffset(offset, limit, onRecord, onComplete, reverse || false);
         }
-
-        messageBuffer[msgId] = (data) => {
-            if (data[0] === "response") {
-                onRecord(data[1] as any, data[2]);
-            } else {
-                onComplete();
-            }
-        }
-
-        this._worker.send({ type: "snap-get-offset", id: msgId, offset, limit, reverse });
     }
 
     /**
@@ -545,20 +607,27 @@ export class SnapDB<K> {
                 res();
                 return;
             }
-            let msgId = rand();
-            while (messageBuffer[msgId]) {
-                msgId = rand();
-            }
-            messageBuffer[msgId] = (data) => {
-                this._worker.kill();
-                this._isReady = false;
-                if (data[0]) {
-                    rej(data[0])
-                } else {
-                    res();
+            if (this._worker) {
+                const msgId = this._msgID((data) => {
+                    this._worker.kill();
+                    this._isReady = false;
+                    if (data[0]) {
+                        rej(data[0])
+                    } else {
+                        res();
+                    }
+                })
+                this._worker.send({ type: "snap-close", id: msgId });
+            } else {
+                try {
+                    this._isReady = false;
+                    this._compactor.kill();
+                    res(this._database.close());
+                } catch(e) {
+                    rej(e);
                 }
             }
-            this._worker.send({ type: "snap-close", id: msgId });
+
         });
     }
 
@@ -575,39 +644,46 @@ export class SnapDB<K> {
                 return;
             }
             this._isReady = false;
-            let msgId = rand();
-            while (messageBuffer[msgId]) {
-                msgId = rand();
-            }
-            messageBuffer[msgId] = (data) => {
-                if (data[0]) {
-                    rej(data[0])
-                } else {
-                    res();
-                }
-            }
 
             // kill compactor thread (don't care what it's doing)
             this._compactor.kill();
+            
+            if (this._worker) {
+                const msgId = this._msgID((data) => {
+                    if (data[0]) {
+                        rej(data[0])
+                    } else {
+                        res();
+                    }
+                })
+                this._worker.send({ type: "snap-clear", id: msgId });
+            } else {
+                this._database.clear();
 
-            // spin up new compactor thread
-            this._compactor = fork(path.join(__dirname, "compact.js"));
-            this._compactor.on("message", (msg) => {
-                if (msg.type === "compact-done") {
-                    this.clearCompactFiles = msg.files;
-                    this._worker.send({type: "compact-done"});
-                }
-            });
-            this._compactor.send({ type: "snap-compact", path: this._path, cache: this.memoryCache, keyType: this.keyType });
-
-            this._worker.send({ type: "snap-clear", id: msgId });
+                // spin up new compactor thread
+                this._compactor = fork(path.join(__dirname, "compact.js"));
+                this._compactor.on("message", this._onCompactorMessage);
+                this._isReady = true;
+            }            
         });
+    }
+
+    private _onCompactorMessage(msg) {
+        if (msg.type === "compact-done") {
+            this.clearCompactFiles = msg.files;
+            if (this._worker) {
+                this._worker.send({ type: "compact-done" });
+            } else {
+                this._database.compactDone();
+                this._cleanupCompaction();
+            }
+        }
     }
 
 }
 
 
-
+/*
 function makeid() {
     var text = "";
     var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -619,7 +695,7 @@ function makeid() {
 }
 
 
-const db = new SnapDB<number>({dir: "my-db-test", key: "int"});
+const db = new SnapDB<number>({dir: "my-db-test", key: "int", mainThread: true, autoFlush: false, cache: true});
 console.time("READY");
 db.ready().then(() => {
     console.timeEnd("READY");
@@ -678,4 +754,4 @@ db.ready().then(() => {
             console.trace(err);
         })
     }
-});
+});*/

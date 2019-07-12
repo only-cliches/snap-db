@@ -1,6 +1,6 @@
 {
   "name": "snap-db",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Fast & Durable pure javascript key-value store for NodeJS/Electron",
   "main": "bin/index.js",
   "typings": "bin/index.d.ts",

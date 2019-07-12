@@ -45,8 +45,6 @@ import { SnapDB } from "snap-db";
 const db = new SnapDB({
     dir: "my_db", // database folder
     key: "int", // key type, can be "int", "string" or "float"
-    cache: false, // enable or disable value cache,
-    autoFlush: true // automatically flush the log and perform compaction
 });
 
 // wait for db to be ready

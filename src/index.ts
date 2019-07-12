@@ -41,6 +41,7 @@ export class SnapDB<K> {
     public keyType: "string" | "float" | "int";
     public memoryCache?: boolean;
     private _database: SnapDatabase;
+    private _autoFlush: boolean | number;
 
     /**
      *Creates an instance of SnapDB.
@@ -61,7 +62,7 @@ export class SnapDB<K> {
         mainThread?: boolean
     } | string, keyType?: "string" | "float" | "int", cache?: boolean) {
 
-        let autoFlush: boolean | number = true;
+        this._autoFlush = true;
         this._onCompactorMessage = this._onCompactorMessage.bind(this);
 
         if (typeof args === "string") {
@@ -75,9 +76,9 @@ export class SnapDB<K> {
             this._path = path.resolve(args.dir);
             this.keyType = args.key;
             this.memoryCache = args.cache || false;
-            autoFlush = typeof args.autoFlush === "undefined" ? true : args.autoFlush;
+            this._autoFlush = typeof args.autoFlush === "undefined" ? true : args.autoFlush;
             if (args.mainThread) {
-                this._database = new SnapDatabase(this._path, this.keyType, this.memoryCache, autoFlush, false);
+                this._database = new SnapDatabase(this._path, this.keyType, this.memoryCache, this._autoFlush, false);
             } else {
                 this._worker = fork(path.join(__dirname, "database.js"));
             }
@@ -141,7 +142,7 @@ export class SnapDB<K> {
                         break;
                 }
             });
-            this._worker.send({ type: "snap-connect", path: this._path, cache: this.memoryCache, keyType: this.keyType, autoFlush: autoFlush });
+            this._worker.send({ type: "snap-connect", path: this._path, cache: this.memoryCache, keyType: this.keyType, autoFlush: this._autoFlush });
         } else {
             const checkReady = () => {
                 if (this._database.ready) {
@@ -156,7 +157,7 @@ export class SnapDB<K> {
         }
 
         this._compactor.on("message", this._onCompactorMessage);
-        this._compactor.send({ type: "snap-compact", path: this._path, cache: this.memoryCache, keyType: this.keyType, autoFlush: autoFlush });
+        this._compactor.send({ type: "snap-compact", path: this._path, cache: this.memoryCache, keyType: this.keyType, autoFlush: this._autoFlush });
     }
 
     /**
@@ -663,6 +664,7 @@ export class SnapDB<K> {
                 // spin up new compactor thread
                 this._compactor = fork(path.join(__dirname, "compact.js"));
                 this._compactor.on("message", this._onCompactorMessage);
+                this._compactor.send({ type: "snap-compact", path: this._path, cache: this.memoryCache, keyType: this.keyType, autoFlush: this._autoFlush });
                 this._isReady = true;
             }            
         });

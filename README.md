@@ -69,9 +69,9 @@ The `SnapDB` class accepts a single argument which is an object that has the fol
 |----------|------|----------------------------|----------------------------------------------------------------------------------------------------------------------|
 | dir | true | string                     | The folder to persist data into.                |
 | key  | true | "int" \| "string" \| "float" | The database can only use one type of key at a time.  You cannot change the key after the database has been created. |
-| mainThread | false | bool                       | If `true` database actions will be ran in single thread mode.   In single thread mode write and read performance is more than doubled, but database actions will block your NodeJS application.  Blocking likely won't be noticeable if you always have small (under 1KB) keys and values.  Compaction is always done in a different thread.    |
-| cache | false | bool                       | If `true`, data will be loaded to/from js memory in addition to being saved to disk, allowing MUCH faster reads at the cost of having the entire database in memory.             |
-| autoFlush | false | bool \| number | The database automatically flushes the log/memtable to SSTables once the log/memtable reaches 2MB or greater in size.  Set this to `false` to disable automatic flushes/compaction entirely.  Set this to a number (in MB) to control how large the log/memtable should get before a flush/compaction is performed.
+| mainThread | false | bool                       | Default is `false`. If `true` database actions will be ran in single thread mode.   In single thread mode write and read performance is more than doubled, but database actions will block your NodeJS application.  Blocking likely won't be noticeable if you always have small (under 1KB) keys and values.  Compaction is always done in a different thread.    |
+| cache | false | bool                       | Default is `false`. If `true`, data will be loaded to/from js memory in addition to being saved to disk, allowing MUCH faster reads at the cost of having the entire database in memory.             |
+| autoFlush | false | bool \| number | Defaults to 2MB. The database automatically flushes the log/memtable to SSTables once the log/memtable reaches 2MB or greater in size.  Set this to `false` to disable automatic flushes/compaction entirely.  Set this to a number (in MB) to control how large the log/memtable should get before a flush/compaction is performed.
 
 
 

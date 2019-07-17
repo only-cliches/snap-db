@@ -19,7 +19,8 @@
     "include": [
         "src/index.ts",
         "src/database.ts",
-        "src/test.ts",
+        "src/test-single.ts",
+        "src/test-multi.ts",
         "src/compact.ts",
         "src/bloom.ts"
     ],

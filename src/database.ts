@@ -30,7 +30,7 @@ export class SnapDatabase {
 
     private _isConnecting: boolean = false;
 
-    private _txNum: number = Math.round(Math.random() * 256);
+    public txNum: number = Math.round(Math.random() * 256);
 
     private _bloomCache: {
         [fileName: number]: IbloomFilterObj;
@@ -390,14 +390,14 @@ export class SnapDatabase {
 
     public startTX() {
         let newTXNum = 0;
-        while (newTXNum === 0 || newTXNum === this._txNum) {
+        while (newTXNum === 0 || newTXNum === this.txNum) {
             newTXNum = Math.round(Math.random() * 256);
         }
-        this._txNum = newTXNum;
+        this.txNum = newTXNum;
         fs.writeSync(this._logHandle, NULLBYTE);
         this._memTableSize++;
 
-        const startTX = "TX-START-" + this._txNum;
+        const startTX = "TX-START-" + this.txNum;
         fs.writeSync(this._logHandle, startTX);
         this._memTableSize += startTX.length;
 
@@ -408,7 +408,7 @@ export class SnapDatabase {
         fs.writeSync(this._logHandle, NULLBYTE);
         this._memTableSize++;
 
-        const endTX = "TX-END-" + this._txNum;
+        const endTX = "TX-END-" + this.txNum;
         fs.writeSync(this._logHandle, endTX);
         this._memTableSize += endTX.length;
 
@@ -604,7 +604,7 @@ export class SnapDatabase {
                 case "snap-del":
                     try {
                         this.delete(key);
-                        if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "delete", data: [] })
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "delete", data: [undefined, true] })
                     } catch (e) {
                         console.error(e);
                         if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "delete", data: ["Unable to delete key! " + key] })
@@ -614,7 +614,7 @@ export class SnapDatabase {
                 case "snap-put":
                     try {
                         this.put(key, msg.value);
-                        if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "put", data: [] });
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "put", data: [undefined, true] });
                     } catch (e) {
                         console.error(e);
                         if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "put", data: ["Error writing value!"] })
@@ -622,7 +622,7 @@ export class SnapDatabase {
                     break;
                 case "snap-get-all-keys":
                     this.getAllKeys((key) => {
-                        if (process.send) process.send({ type: "snap-res", event: "get-keys", id: msg.id, data: ["response", key] })
+                        if (process.send) process.send({ type: "snap-res", event: "get-keys", id: msg.id, data: [undefined, key] })
                     }, (err) => {
                         if (process.send) process.send({ type: "snap-res-done", event: "get-keys-end", id: msg.id, data: [err] })
                     }, msg.reverse);
@@ -636,29 +636,29 @@ export class SnapDatabase {
                         return;
                     }
                     this.startTX();
-                    if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "tx-start", data: [undefined, this._txNum] });
+                    if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "tx-start", data: [undefined, this.txNum] });
                     break;
                 case "snap-end-tx":
                     this.endTX();
-                    if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "tx-end", data: [undefined, this._txNum] });
+                    if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "tx-end", data: [undefined, this.txNum] });
                     break;
                 case "snap-get-all":
                     this.getAll((key, value) => {
-                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-all", data: ["response", key, value] })
+                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-all", data: [undefined, {k: key, v: value}] })
                     }, (err) => {
                         if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "get-all-end", data: [err] })
                     }, msg.reverse);
                     break;
                 case "snap-get-offset":
                     this.getOffset(msg.offset, msg.limit, (key, value) => {
-                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-offset", data: ["response", key, value] });
+                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-offset", data: [undefined, {k: key, v: value}]  });
                     }, (err) => {
                         if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "get-offset-end", data: [err] })
                     }, msg.reverse);
                     break;
                 case "snap-get-range":
                     this.getRange(msg.lower, msg.higher, (key, value) => {
-                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-range", data: ["response", key, value] })
+                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-range", data: [undefined, {k: key, v: value}]  })
                     }, (err) => {
                         if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "get-range-end", data: [err] })
                     }, msg.reverse);

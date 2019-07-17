@@ -5,9 +5,8 @@
   "main": "bin/index.js",
   "typings": "bin/index.d.ts",
   "scripts": {
-    "build-wasm": "cd src-wasm && ./build.sh --prod && cp ../src/db.js ../bin/db.js",
     "build": "rm -rf bin && mkdir bin && tsc",
-    "test": "tsc && rm -rf testDB* && mocha bin/test.js && rm -rf testDB*"
+    "test": "tsc && rm -rf testDB* && mocha bin/test-multi.js && rm -rf testDB* && mocha bin/test-single.js && rm -rf testDB*"
   },
   "repository": {
     "type": "git",

@@ -105,13 +105,13 @@ export class SnapDB<K> {
                         break;
                     case "snap-res":
                         if (msg.event && this._hasEvents) {
-                            this._rse.trigger(msg.event, { target: this, time: Date.now(), data: msg.data });
+                            this._rse.trigger(msg.event, { target: this, tx: msg.id, time: Date.now(), data: msg.data[1], error: msg.data[0] });
                         }
                         messageBuffer[msg.id].apply(null, [msg.data]);
                         break;
                     case "snap-res-done":
                         if (msg.event && this._hasEvents) {
-                            this._rse.trigger(msg.event, { target: this, time: Date.now(), data: msg.data });
+                            this._rse.trigger(msg.event, { target: this, tx: msg.id, time: Date.now(), data: msg.data[1], error: msg.data[0] });
                         }
                         if (msg.event === "tx-start") {
                             this.isTx = true;
@@ -130,7 +130,7 @@ export class SnapDB<K> {
 
                         messageBuffer[msg.id].apply(null, [msg.data]);
                         delete messageBuffer[msg.id];
-                        if (this._hasEvents) this._rse.trigger("clear", { target: this, time: Date.now() });
+                        if (this._hasEvents) this._rse.trigger("clear", { target: this, tx: msg.id, time: Date.now() });
                         break;
                     case "snap-close-done":
                         this._isReady = false;
@@ -138,7 +138,7 @@ export class SnapDB<K> {
                         this._worker.kill();
                         messageBuffer[msg.id].apply(null, [msg.data]);
                         delete messageBuffer[msg.id];
-                        if (this._hasEvents) this._rse.trigger("close", { target: this, time: Date.now() });
+                        if (this._hasEvents) this._rse.trigger("close", { target: this, tx: msg.id, time: Date.now() });
                         break;
                 }
             });
@@ -246,7 +246,7 @@ export class SnapDB<K> {
         return new Promise((res, rej) => {
             const checkReady = () => {
                 if (this._isReady) {
-                    this._rse.trigger("ready", { target: this, time: Date.now() });
+                    if (this._hasEvents) this._rse.trigger("ready", { target: this, time: Date.now() });
                     res();
                 } else {
                     setTimeout(checkReady, 100);
@@ -283,10 +283,14 @@ export class SnapDB<K> {
     
                 this._worker.send({ type: "snap-get", key: key, id: msgId });
             } else {
+                const msgId = rand();
                 try {
-                    res(this._database.get(key));
+                    const data = this._database.get(key);
+                    res(data);
+                    if (this._hasEvents) this._rse.trigger("get", {target: this, tx: msgId, time: Date.now(), data: data});
                 } catch(e) {
                     rej(e);
+                    if (this._hasEvents) this._rse.trigger("get", {target: this, tx: msgId, time: Date.now(), error: e});
                 }
             }
 
@@ -317,10 +321,13 @@ export class SnapDB<K> {
     
                 this._worker.send({ type: "snap-del", key: key, id: msgId });
             } else {
+                const msgId = rand();
                 try {
                     res(this._database.delete(key));
+                    if (this._hasEvents) this._rse.trigger("delete", {target: this, tx: msgId, time: Date.now(), data: true});
                 } catch(e) {
                     rej(e);
+                    if (this._hasEvents) this._rse.trigger("delete", {target: this, tx: msgId, time: Date.now(), error: e});
                 }
             }
 
@@ -359,11 +366,13 @@ export class SnapDB<K> {
     
                 this._worker.send({ type: "snap-put", key: parseKey[this.keyType](key), value: data, id: msgId });
             } else {
-
+                const msgId = rand();
                 try {
                     res(this._database.put(parseKey[this.keyType](key), data));
+                    if (this._hasEvents) this._rse.trigger("put", {target: this, tx: msgId, time: Date.now(), data: true});
                 } catch(e) {
                     rej(e);
+                    if (this._hasEvents) this._rse.trigger("put", {target: this, tx: msgId, time: Date.now(), error: e});
                 }
             }
 
@@ -386,8 +395,10 @@ export class SnapDB<K> {
 
         if (this._worker) {
             const msgId = this._msgID((data) => {
-                if (data[0] === "response") {
-                    onRecord(data[1] as any);
+                if (data[0]) { // error complete
+                    onComplete(data[0]);
+                } else if (data[1] !== undefined) { // key
+                    onRecord(data[1]);
                 } else {
                     onComplete();
                 }
@@ -395,7 +406,14 @@ export class SnapDB<K> {
     
             this._worker.send({ type: "snap-get-all-keys", id: msgId, reverse });
         } else {
-            this._database.getAllKeys(onRecord, onComplete, reverse || false);
+            const msgId = rand();
+            this._database.getAllKeys((key) => {
+                onRecord(key);
+                if (this._hasEvents) this._rse.trigger("get-keys", {target: this, tx: msgId, time: Date.now(), data: key});
+            }, (err) => {
+                onComplete(err)
+                if (this._hasEvents) this._rse.trigger("get-keys-end", {target: this, tx: msgId, time: Date.now(), error: err});
+            }, reverse || false);
         }
 
 
@@ -426,10 +444,13 @@ export class SnapDB<K> {
                 this._worker.send({ type: "snap-start-tx", id: msgId });
             } else {
                 try {
-                    res(this._database.startTX());
+                    this._database.startTX();
+                    res(this._database.txNum);
+                    if (this._hasEvents) this._rse.trigger("tx-start", {target: this, tx: this._database.txNum, time: Date.now(), data: this._database.txNum});
                     this.isTx = true;
                 } catch(e) {
                     rej(e);
+                    if (this._hasEvents) this._rse.trigger("tx-start", {target: this, tx: undefined, time: Date.now(), error: e});
                 }
                 
             }
@@ -461,10 +482,14 @@ export class SnapDB<K> {
                 this._worker.send({ type: "snap-end-tx", id: msgId });
             } else {
                 try {
-                    res(this._database.endTX());
+                    const currentTX = this._database.txNum;
+                    this._database.endTX();
+                    if (this._hasEvents) this._rse.trigger("tx-end", {target: this, tx: currentTX, time: Date.now(), data: currentTX});
+                    res(currentTX);
                     this.isTx = false;
                 } catch(e) {
                     rej(e);
+                    if (this._hasEvents) this._rse.trigger("tx-end", {target: this, tx: this._database.txNum, time: Date.now(), error: e});
                 }
             }
 
@@ -496,10 +521,14 @@ export class SnapDB<K> {
     
                 this._worker.send({ type: "snap-count", id: msgId });
             } else {
+                const msgId = rand();
                 try {
-                    res(this._database.getCount());
+                    const ct = this._database.getCount();
+                    res(ct);
+                    if (this._hasEvents) this._rse.trigger("get-count", {target: this, tx: msgId, time: Date.now(), data: ct});
                 } catch(e) {
                     rej(e);
+                    if (this._hasEvents) this._rse.trigger("get-count", {target: this, tx: msgId, time: Date.now(), error: e});
                 }
             }
         });
@@ -520,8 +549,10 @@ export class SnapDB<K> {
         }
         if (this._worker) {
             const msgId = this._msgID((data) => {
-                if (data[0] === "response") {
-                    onRecord(data[1] as any, data[2]);
+                if (data[0]) { // error complete
+                    onComplete(data[0]);
+                } else if (data[1]) { // key/value
+                    onRecord(data[1].k, data[1].v);
                 } else {
                     onComplete();
                 }
@@ -529,7 +560,14 @@ export class SnapDB<K> {
     
             this._worker.send({ type: "snap-get-all", id: msgId, reverse });
         } else {
-            this._database.getAll(onRecord, onComplete, reverse || false);
+            const msgId = rand();
+            this._database.getAll((key, data) => {
+                onRecord(key, data);
+                if (this._hasEvents) this._rse.trigger("get-all", {target: this, tx: msgId, time: Date.now(), data: {k: key, v: data}});
+            }, (err) => {
+                onComplete(err);
+                if (this._hasEvents) this._rse.trigger("get-all-end", {target: this, tx: msgId, time: Date.now(), error: err});
+            }, reverse || false);
         }
     }
 
@@ -551,8 +589,10 @@ export class SnapDB<K> {
 
         if (this._worker) {
             const msgId = this._msgID((data) => {
-                if (data[0] === "response") {
-                    onRecord(data[1] as any, data[2]);
+                if (data[0]) { // error complete
+                    onComplete(data[0]);
+                } else if (data[1]) { // key/value
+                    onRecord(data[1].k, data[1].v);
                 } else {
                     onComplete();
                 }
@@ -560,7 +600,14 @@ export class SnapDB<K> {
     
             this._worker.send({ type: "snap-get-range", id: msgId, lower, higher, reverse });
         } else {
-            this._database.getRange(lower, higher, onRecord, onComplete, reverse || false);
+            const msgId = rand();
+            this._database.getRange(lower, higher, (key, data) => {
+                onRecord(key, data);
+                if (this._hasEvents) this._rse.trigger("get-range", {target: this, tx: msgId, time: Date.now(), data: {k: key, v: data}});
+            }, (err) => {
+                onComplete(err);
+                if (this._hasEvents) this._rse.trigger("get-range-end", {target: this, tx: msgId, time: Date.now(), error: err});
+            }, reverse || false);
         }
     }
 
@@ -583,8 +630,10 @@ export class SnapDB<K> {
 
         if (this._worker) {
             const msgId = this._msgID((data) => {
-                if (data[0] === "response") {
-                    onRecord(data[1] as any, data[2]);
+                if (data[0]) { // error complete
+                    onComplete(data[0]);
+                } else if (data[1]) { // key/value
+                    onRecord(data[1].k, data[1].v);
                 } else {
                     onComplete();
                 }
@@ -592,7 +641,14 @@ export class SnapDB<K> {
     
             this._worker.send({ type: "snap-get-offset", id: msgId, offset, limit, reverse });
         } else {
-            this._database.getOffset(offset, limit, onRecord, onComplete, reverse || false);
+            const msgId = rand();
+            this._database.getOffset(offset, limit, (key, data) => {
+                onRecord(key, data);
+                if (this._hasEvents) this._rse.trigger("get-offset", {target: this, tx: msgId, time: Date.now(), data: {k: key, v: data}});
+            }, (err) => {
+                onComplete(err);
+                if (this._hasEvents) this._rse.trigger("get-offset-end", {target: this, tx: msgId, time: Date.now(), error: err});
+            }, reverse || false);
         }
     }
 
@@ -620,10 +676,12 @@ export class SnapDB<K> {
                 })
                 this._worker.send({ type: "snap-close", id: msgId });
             } else {
+ 
                 try {
                     this._isReady = false;
                     this._compactor.kill();
                     res(this._database.close());
+                    if (this._hasEvents) this._rse.trigger("close", { target: this, tx: rand(), time: Date.now() });
                 } catch(e) {
                     rej(e);
                 }
@@ -659,6 +717,7 @@ export class SnapDB<K> {
                 })
                 this._worker.send({ type: "snap-clear", id: msgId });
             } else {
+                const msgId = rand();
                 this._database.clear();
 
                 // spin up new compactor thread
@@ -666,6 +725,7 @@ export class SnapDB<K> {
                 this._compactor.on("message", this._onCompactorMessage);
                 this._compactor.send({ type: "snap-compact", path: this._path, cache: this.memoryCache, keyType: this.keyType, autoFlush: this._autoFlush });
                 this._isReady = true;
+                if (this._hasEvents) this._rse.trigger("clear", { target: this, tx: msgId, time: Date.now() });
             }            
         });
     }

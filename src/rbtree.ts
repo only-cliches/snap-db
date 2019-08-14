@@ -25,8 +25,7 @@ THE SOFTWARE.
 
 */
 
-var RED = 0
-var BLACK = 1
+const RED = 0, BLACK = 1;
 
 
 export class RBNode {

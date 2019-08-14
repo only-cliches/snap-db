@@ -1,9 +1,9 @@
 import * as path from "path";
 import { fork, ChildProcess } from "child_process";
-import { VERSION, fileName as fNameFN } from "./common";
+import { VERSION, fileName as fNameFN, rand } from "./common";
 import { ReallySmallEvents } from "./rse";
 import * as fs from "fs";
-import { SnapDatabase, rand } from "./database";
+import { SnapDatabase } from "./database";
 
 const messageBuffer: {
     [messageId: string]: (values: string[]) => void;

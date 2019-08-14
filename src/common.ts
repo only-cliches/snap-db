@@ -24,6 +24,16 @@ export interface SnapIndex {
     hash: string;
 }
 
+export const rand = () => {
+    var text = "";
+    var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+    for (var i = 0; i < 6; i++)
+        text += possible.charAt(Math.floor(Math.random() * possible.length));
+
+    return text;
+}
+
 export const writeManifestUpdate = (dbPath: string, manifest: SnapManifest) => {
     // write manifest to temp
     fs.writeFileSync(path.join(dbPath, "manifest-temp.json"), JSON.stringify(manifest));

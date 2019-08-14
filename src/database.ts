@@ -1,18 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
-import { SnapManifest, writeManifestUpdate, fileName, VERSION, throttle, SnapIndex, NULLBYTE, tableGenerator } from "./common";
+import { SnapManifest, writeManifestUpdate, fileName, VERSION, throttle, SnapIndex, NULLBYTE, tableGenerator, rand } from "./common";
 import { BloomFilter, MurmurHash3, IbloomFilterObj } from "./bloom";
 import { createRBTree, RedBlackTree, RedBlackTreeIterator } from "./rbtree";
-
-export const rand = () => {
-    var text = "";
-    var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-
-    for (var i = 0; i < 6; i++)
-        text += possible.charAt(Math.floor(Math.random() * possible.length));
-
-    return text;
-}
 
 export class SnapDatabase {
 

@@ -421,6 +421,32 @@ export class SnapDB<K> {
     }
 
     /**
+     * Async Iterable version of get all keys.
+     * 
+     *
+     * @param {boolean} [reverse]
+     * @returns {Promise<AsyncIterableIterator<K>>}
+     * @memberof SnapDB
+     */
+    public getAllKeysAsync(reverse?: boolean):Promise<AsyncIterableIterator<K>>  {
+        return new Promise((res, rej) => {
+            let keys: any[] = [];
+            this.getAllKeys((key) => {
+                keys.push(key);
+            }, () => {
+                async function* loopKeys() {
+                    let i = 0;
+                    while(i < keys.length) {
+                        yield keys[i];
+                        i++;
+                    }
+                }
+                res(loopKeys());
+            }, reverse);
+        })
+    }
+
+    /**
      * Starts a transaction.
      *
      * @returns {Promise<any>}
@@ -555,6 +581,31 @@ export class SnapDB<K> {
     }
 
     /**
+     * Async Iterable version of getAll.
+     *
+     * @param {boolean} [reverse]
+     * @returns {Promise<AsyncIterableIterator<[K, string]>>}
+     * @memberof SnapDB
+     */
+    public getAllAsync(reverse?: boolean):Promise<AsyncIterableIterator<[K, string]>>  {
+        return new Promise((res, rej) => {
+            let values: any[] = [];
+            this.getAll((key, value) => {
+                values.push([key, value]);
+            }, () => {
+                async function* loopValues() {
+                    let i = 0;
+                    while(i < values.length) {
+                        yield values[i];
+                        i++;
+                    }
+                }
+                res(loopValues());
+            }, reverse);
+        })
+    }
+
+    /**
      * Gets the keys and values between a given range, inclusive.
      *
      * @param {K} lower
@@ -590,6 +641,31 @@ export class SnapDB<K> {
                 }, reverse || false);
             }
         });
+    }
+
+    /**
+     * Async Iterable version of range.
+     *
+     * @param {boolean} [reverse]
+     * @returns {Promise<AsyncIterableIterator<[K, string]>>}
+     * @memberof SnapDB
+     */
+    public rangeAsync(lower: K, higher: K, reverse?: boolean):Promise<AsyncIterableIterator<[K, string]>>  {
+        return new Promise((res, rej) => {
+            let values: any[] = [];
+            this.range(lower, higher, (key, value) => {
+                values.push([key, value]);
+            }, () => {
+                async function* loopValues() {
+                    let i = 0;
+                    while(i < values.length) {
+                        yield values[i];
+                        i++;
+                    }
+                }
+                res(loopValues());
+            }, reverse);
+        })
     }
 
     /**
@@ -630,6 +706,31 @@ export class SnapDB<K> {
             }
         });
 
+    }
+
+    /**
+     * Async Iterable version of offset.
+     *
+     * @param {boolean} [reverse]
+     * @returns {Promise<AsyncIterableIterator<[K, string]>>}
+     * @memberof SnapDB
+     */
+    public offsetAsync(offset: number, limit: number, reverse?: boolean):Promise<AsyncIterableIterator<[K, string]>>  {
+        return new Promise((res, rej) => {
+            let values: any[] = [];
+            this.offset(offset, limit, (key, value) => {
+                values.push([key, value]);
+            }, () => {
+                async function* loopValues() {
+                    let i = 0;
+                    while(i < values.length) {
+                        yield values[i];
+                        i++;
+                    }
+                }
+                res(loopValues());
+            }, reverse);
+        })
     }
 
     /**

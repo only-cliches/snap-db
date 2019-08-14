@@ -1,5 +1,6 @@
 # [1.1.2]
 - Resolved issue [#2](https://github.com/ClickSimply/snap-db/issues/2), `.ready` no longer needs to be called to start using the database.
+- Resolved issue [#1](https://github.com/ClickSimply/snap-db/issues/1), added async versions of all looping functions.
 
 # [1.1.1] 07-17-2019
 - **BREAKING CHANGE** Removed old WASM code entirely.  If you're migrating from SQLite based install you'll have to install an older version first to migrate.

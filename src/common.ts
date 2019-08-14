@@ -17,6 +17,17 @@ export interface SnapManifest {
     }[];
 };
 
+export interface QueryArgs<K> {
+    gt?: K;
+    gte?: K;
+    lt?: K;
+    lte?: K;
+    offset?: number;
+    limit?: number;
+    values?: boolean;
+    reverse?: boolean;
+}
+
 export interface SnapIndex {
     keys: {
         [key: string]: [number, number]

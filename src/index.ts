@@ -1,6 +1,6 @@
 import * as path from "path";
 import { fork, ChildProcess } from "child_process";
-import { VERSION, fileName as fNameFN, rand } from "./common";
+import { VERSION, fileName as fNameFN, rand, QueryArgs } from "./common";
 import { ReallySmallEvents } from "./rse";
 import * as fs from "fs";
 import { SnapDatabase } from "./database";
@@ -385,31 +385,7 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public getAllKeys(onRecord: (key: K) => void, onComplete: (err?: any) => void, reverse?: boolean) {
-
-        this._doWhenReady(() => {
-            if (this._worker) {
-                const msgId = this._msgID((data) => {
-                    if (data[0]) { // error complete
-                        onComplete(data[0]);
-                    } else if (data[1] !== undefined) { // key
-                        onRecord(data[1]);
-                    } else {
-                        onComplete();
-                    }
-                })
-
-                this._worker.send({ type: "snap-get-all-keys", id: msgId, reverse });
-            } else {
-                const msgId = rand();
-                this._database.getAllKeys((key) => {
-                    onRecord(key);
-                    if (this._hasEvents) this._rse.trigger("get-keys", { target: this, tx: msgId, time: Date.now(), data: key });
-                }, (err) => {
-                    onComplete(err)
-                    if (this._hasEvents) this._rse.trigger("get-keys-end", { target: this, tx: msgId, time: Date.now(), error: err });
-                }, reverse || false);
-            }
-        });
+        this._standardKeysAndValues({reverse: reverse, values: false}, "get-keys", "get-keys-end", onRecord, onComplete);
     }
 
     /**
@@ -420,48 +396,19 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public getAllKeysIt(reverse?: boolean): Promise<AsyncIterableIterator<K>> {
-        return this._doWhenReady((res, rej) => {
-            const that = this;
-            res(async function* () {
-                if (that._worker) {
-                    const id = await that._asyncNewIterator("all", [], reverse || false);
-                    try {
-                        let nextKey = await that._asyncNextIterator(id);
-                        while (!nextKey.done) {
-                            yield nextKey.key;
-                            if (that._hasEvents) that._rse.trigger("get-keys", { target: that, tx: id, time: Date.now(), data: nextKey.key });
-                            nextKey = await that._asyncNextIterator(id);
-                        }
-                        await that._asyncClearIteator(id);
-
-                        if (that._hasEvents) that._rse.trigger("get-keys-end", { target: that, tx: id, time: Date.now(), error: undefined });
-                    } catch (e) {
-                        if (that._hasEvents) that._rse.trigger("get-keys-end", { target: that, tx: id, time: Date.now(), error: e });
-                        throw e;
+        return new Promise((res, rej) => {
+            this._iterateKeysAndValues({reverse: reverse, values: false}, "get-keys", "get-keys-end").then((it) => {
+                const loop = async function* () {
+                    let current = await it.next();
+                    while(!current.done) {
+                        yield current.value[0];
+                        current = await it.next();
                     }
-
-                } else {
-                    const id = that._database.newIterator("all", [], reverse || false);
-                    try {
-                        let nextKey = that._database.nextIterator(id);
-                        while (!nextKey.done) {
-                            yield nextKey.key;
-                            if (that._hasEvents) that._rse.trigger("get-keys", { target: that, tx: id, time: Date.now(), data: nextKey.key });
-                            nextKey = that._database.nextIterator(id)
-                        }
-                        that._database.clearIterator(id);
-
-                        if (that._hasEvents) that._rse.trigger("get-keys-end", { target: that, tx: id, time: Date.now(), error: undefined });
-                    } catch (e) {
-                        if (that._hasEvents) that._rse.trigger("get-keys-end", { target: that, tx: id, time: Date.now(), error: e });
-                        throw e;
-                    }
-                }
-            });
-        });
+                };
+                res(loop());
+            }).catch(rej);
+        })
     }
-
-
 
     /**
      * Get the total number of keys in the data store.
@@ -504,31 +451,7 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public getAll(onRecord: (key: K, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean) {
-
-        this._doWhenReady(() => {
-            if (this._worker) {
-                const msgId = this._msgID((data) => {
-                    if (data[0]) { // error complete
-                        onComplete(data[0]);
-                    } else if (data[1]) { // key/value
-                        onRecord(data[1].k, data[1].v);
-                    } else {
-                        onComplete();
-                    }
-                })
-
-                this._worker.send({ type: "snap-get-all", id: msgId, reverse });
-            } else {
-                const msgId = rand();
-                this._database.getAll((key, data) => {
-                    onRecord(key, data);
-                    if (this._hasEvents) this._rse.trigger("get-all", { target: this, tx: msgId, time: Date.now(), data: { k: key, v: data } });
-                }, (err) => {
-                    onComplete(err);
-                    if (this._hasEvents) this._rse.trigger("get-all-end", { target: this, tx: msgId, time: Date.now(), error: err });
-                }, reverse || false);
-            }
-        });
+        this._standardKeysAndValues({reverse: reverse}, "get-all", "get-all-end", onRecord, onComplete);
     }
 
     /**
@@ -539,7 +462,7 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public getAllIt(reverse?: boolean): Promise<AsyncIterableIterator<[K, string]>> {
-        return this._iterateKeysAndValues("all", [], reverse || false, "get-all", "get-all-end");
+        return this._iterateKeysAndValues({reverse: reverse}, "get-all", "get-all-end");
     }
 
     /**
@@ -553,31 +476,7 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public range(lower: K, higher: K, onRecord: (key: K, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean) {
-
-        this._doWhenReady(() => {
-            if (this._worker) {
-                const msgId = this._msgID((data) => {
-                    if (data[0]) { // error complete
-                        onComplete(data[0]);
-                    } else if (data[1]) { // key/value
-                        onRecord(data[1].k, data[1].v);
-                    } else {
-                        onComplete();
-                    }
-                })
-
-                this._worker.send({ type: "snap-get-range", id: msgId, lower, higher, reverse });
-            } else {
-                const msgId = rand();
-                this._database.getRange(lower, higher, (key, data) => {
-                    onRecord(key, data);
-                    if (this._hasEvents) this._rse.trigger("get-range", { target: this, tx: msgId, time: Date.now(), data: { k: key, v: data } });
-                }, (err) => {
-                    onComplete(err);
-                    if (this._hasEvents) this._rse.trigger("get-range-end", { target: this, tx: msgId, time: Date.now(), error: err });
-                }, reverse || false);
-            }
-        });
+        this._standardKeysAndValues({lt: lower, gt: higher, reverse: reverse}, "get-range", "get-range-end", onRecord, onComplete);
     }
 
     /**
@@ -588,7 +487,7 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public rangeIt(lower: K, higher: K, reverse?: boolean): Promise<AsyncIterableIterator<[K, string]>> {
-        return this._iterateKeysAndValues("range", [lower, higher], reverse || false, "get-range", "get-range-end");
+        return this._iterateKeysAndValues({lt: lower, gt: higher, reverse: reverse}, "get-range", "get-range-end");
     }
 
     /**
@@ -602,32 +501,7 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public offset(offset: number, limit: number, onRecord: (key: K, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean) {
-
-        this._doWhenReady(() => {
-            if (this._worker) {
-                const msgId = this._msgID((data) => {
-                    if (data[0]) { // error complete
-                        onComplete(data[0]);
-                    } else if (data[1]) { // key/value
-                        onRecord(data[1].k, data[1].v);
-                    } else {
-                        onComplete();
-                    }
-                })
-
-                this._worker.send({ type: "snap-get-offset", id: msgId, offset, limit, reverse });
-            } else {
-                const msgId = rand();
-                this._database.getOffset(offset, limit, (key, data) => {
-                    onRecord(key, data);
-                    if (this._hasEvents) this._rse.trigger("get-offset", { target: this, tx: msgId, time: Date.now(), data: { k: key, v: data } });
-                }, (err) => {
-                    onComplete(err);
-                    if (this._hasEvents) this._rse.trigger("get-offset-end", { target: this, tx: msgId, time: Date.now(), error: err });
-                }, reverse || false);
-            }
-        });
-
+        this._standardKeysAndValues({offset: offset, limit: limit, reverse: reverse}, "get-offset", "get-offset-end", onRecord, onComplete);
     }
 
     /**
@@ -638,7 +512,30 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public offsetIt(offset: number, limit: number, reverse?: boolean): Promise<AsyncIterableIterator<[K, string]>> {
-        return this._iterateKeysAndValues("offset", [offset, limit], reverse || false, "get-offset", "get-offset-end");
+        return this._iterateKeysAndValues({offset: offset, limit: limit, reverse: reverse}, "get-offset", "get-offset-end");
+    }
+
+    /**
+     * Standard query for data
+     *
+     * @param {QueryArgs<K>} args
+     * @param {((key: K, data: string|undefined) => void)} onRecord
+     * @param {(err?: any) => void} onComplete
+     * @memberof SnapDB
+     */
+    public query(args: QueryArgs<K>, onRecord: (key: K, data: string|undefined) => void, onComplete: (err?: any) => void) {
+        this._standardKeysAndValues(args, "get-query", "get-query-end", onRecord, onComplete);
+    }
+
+    /**
+     * Get a collection of values from the keys at the given offset/limit. Optionally get the results from the end of the key set.
+     *
+     * @param {boolean} [reverse]
+     * @returns {Promise<AsyncIterableIterator<[K, string]>>}
+     * @memberof SnapDB
+     */
+    public queryIt(args: QueryArgs<K>): Promise<AsyncIterableIterator<[K, string]>> {
+        return this._iterateKeysAndValues(args, "get-query", "get-query-end");
     }
 
     /**
@@ -834,6 +731,8 @@ export class SnapDB<K> {
         })
     }
 
+    
+
     /**
      * Handle messages from the compactor thread.
      *
@@ -898,6 +797,67 @@ export class SnapDB<K> {
         }
     }
 
+    private _standardKeysAndValues(args: QueryArgs<K>, progressEvent: string, doneEvent: string, onRecord: (key: K, data: string|undefined) => void, onComplete: (err?: any) => void) {
+        this._doWhenReady(() => {
+            let i = 0;
+            const queryId = rand();
+            if (this._worker) {
+                this._asyncNewIterator(args).then((id) => {
+                    const nextRow = () => {
+                        this._asyncNextIterator(id).then((value) => {
+                            if (value.done) {
+                                onComplete();
+                                if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, tx: queryId, time: Date.now(), error: undefined });
+                            } else {
+                                if (args.values === false) {
+                                    if (this._hasEvents) this._rse.trigger(progressEvent, { target: this, tx: queryId, time: Date.now(), data: { k: value.key, v: undefined } });
+                                    onRecord(value.key, undefined);
+                                    i++;
+                                    i % 250 ? setImmediate(nextRow) : nextRow();
+                                } else {
+                                    this.get(value.key).then((val) => {
+                                        onRecord(value.key, val);
+                                        if (this._hasEvents) this._rse.trigger(progressEvent, { target: this, tx: queryId, time: Date.now(), data: { k: value.key, v: val } });
+                                        i++;
+                                        i % 250 ? setImmediate(nextRow) : nextRow();
+                                    }).catch((error) => {
+                                        if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, tx: queryId, time: Date.now(), error: error });
+                                        onComplete(error);
+                                    });
+                                }
+                            }
+                        }).catch((error) => {
+                            if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, tx: queryId, time: Date.now(), error: error });
+                            onComplete(error);
+                        });
+                    }
+                    nextRow();
+                }).catch((error) => {
+                    if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, tx: queryId, time: Date.now(), error: error });
+                    onComplete(error);
+                });
+            } else {
+                try {
+                    const id = this._database.newIterator(args);
+
+                    let nextKey = this._database.nextIterator(id);
+                    while(!nextKey.done) {
+                        if (args.values === false) {
+                            onRecord(nextKey.key, undefined);
+                        } else {
+                            onRecord(nextKey.key, this._database.get(nextKey.key));
+                        }
+                    }
+                    onComplete();
+                    if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, tx: queryId, time: Date.now(), error: undefined });
+                } catch(e) {
+                    onComplete(e);
+                    if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, tx: queryId, time: Date.now(), error: e });
+                }
+            }
+        });
+    }
+
     /**
      * Generate iterable for database queries.
      *
@@ -910,12 +870,12 @@ export class SnapDB<K> {
      * @returns {Promise<AsyncIterableIterator<[K, string]>>}
      * @memberof SnapDB
      */
-    private _iterateKeysAndValues(mode: "all"|"offset"|"range", args: any[], reverse: boolean, progressEvent: string, doneEvent: string): Promise<AsyncIterableIterator<[K, string]>> {
+    private _iterateKeysAndValues(args: QueryArgs<K>, progressEvent: string, doneEvent: string): Promise<AsyncIterableIterator<[K, string]>> {
         return this._doWhenReady((res, rej) => {
             const that = this;
-            res(async function* () {
+            const loop = async function* () {
                 if (that._worker) {
-                    const id = await that._asyncNewIterator(mode, args, reverse || false);
+                    const id = await that._asyncNewIterator(args);
                     try {
                         let nextKey = await that._asyncNextIterator(id);
                         let nextValue = nextKey.done ? undefined : await that.get(nextKey.key);
@@ -933,7 +893,7 @@ export class SnapDB<K> {
                     }
 
                 } else {
-                    const id = that._database.newIterator(mode, args, reverse || false);
+                    const id = that._database.newIterator(args);
                     try {
                         let nextKey = that._database.nextIterator(id);
                         let nextValue = nextKey.done ? undefined : await that.get(nextKey.key);
@@ -951,7 +911,8 @@ export class SnapDB<K> {
                         throw e;
                     }
                 }
-            });
+            };
+            res(loop());
         });
     }
 
@@ -965,7 +926,7 @@ export class SnapDB<K> {
      * @returns {Promise<string>}
      * @memberof SnapDB
      */
-    private _asyncNewIterator(mode: "all" | "offset" | "range", args: any[], reverse: boolean): Promise<string> {
+    private _asyncNewIterator(args: QueryArgs<any>): Promise<string> {
         return new Promise((res, rej) => {
             const msgId = this._msgID((data) => {
                 if (data[0]) {
@@ -974,7 +935,7 @@ export class SnapDB<K> {
                     res(data[1]);
                 }
             })
-            this._worker.send({ type: "snap-new-iterator", args: [mode, args, reverse], id: msgId });
+            this._worker.send({ type: "snap-new-iterator", args: [args], id: msgId });
         });
     }
 

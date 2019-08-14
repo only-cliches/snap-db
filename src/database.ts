@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { SnapManifest, writeManifestUpdate, fileName, VERSION, throttle, SnapIndex, NULLBYTE, tableGenerator, rand } from "./common";
+import { SnapManifest, writeManifestUpdate, fileName, VERSION, throttle, SnapIndex, NULLBYTE, tableGenerator, rand, QueryArgs } from "./common";
 import { BloomFilter, MurmurHash3, IbloomFilterObj } from "./bloom";
 import { createRBTree, RedBlackTree, RedBlackTreeIterator } from "./rbtree";
 
@@ -237,7 +237,7 @@ export class SnapDatabase {
         return this._bloomCache[fileID];
     }
 
-    public get(key: any, skipCache?: boolean): string {
+    public get(key: any, skipCache?: boolean): string|undefined {
         this._indexCacheClear();
 
         // check cache first
@@ -245,7 +245,7 @@ export class SnapDatabase {
             if (typeof this._cache[key] !== "undefined") {
                 return this._cache[key];
             } else {
-                throw new Error("Key not found!");
+                return undefined;
             }
         }
 
@@ -253,7 +253,7 @@ export class SnapDatabase {
         const memValue = this._memTable.get(key);
         if (typeof memValue !== "undefined") {
             if (memValue === NULLBYTE) { // tombstone
-                throw new Error("Key not found!");
+                return undefined;
             }
             let buff = new Buffer(memValue.offset[1]);
             fs.readSync(this._logHandle, buff, 0, memValue.offset[1], memValue.offset[0]);
@@ -289,7 +289,7 @@ export class SnapDatabase {
 
         // no candidates found, key doesn't exist
         if (candidateFiles.length === 0) {
-            throw new Error("Key not found!");
+            return undefined;
         }
 
         // newer files first
@@ -311,7 +311,7 @@ export class SnapDatabase {
                 let dataStart = index.keys[strKey][0];
                 let dataLength = index.keys[strKey][1];
                 if (dataStart === -1) { // tombstone found
-                    throw new Error("Key not found!");
+                    return undefined;
                 }
                 const fd = fs.openSync(path.join(this._path, fileName(fileID) + ".dta"), "r");
                 let buff = new Buffer(dataLength);
@@ -322,7 +322,7 @@ export class SnapDatabase {
             fileIdx++
         };
 
-        throw new Error("Key not found!");
+        return undefined;
     }
 
     public flushLog(forceFlush?: boolean) {
@@ -468,33 +468,36 @@ export class SnapDatabase {
     }
 
     public iterators: {
-        [key: string]: {it: RedBlackTreeIterator, r: boolean};
+        [key: string]: {it: RedBlackTreeIterator, r: boolean, limit: number, count:  number, end?: any};
     } = {};
 
-    public newIterator(mode: "all"|"offset"|"range", args: any[], reverse: boolean): string {
+    public newIterator(args: QueryArgs<any>): string {
         let id = rand();
         while(this.iterators[id]) {
             id = rand();
         }
-        switch(mode) {
-            case "all":
-                this.iterators[id] = {it: reverse ? this._index.end() : this._index.begin(), r: reverse};
-            break;
-            case "offset":
-                this.iterators[id] = {it: reverse ? this._index.end() : this._index.begin(), r: reverse};
-                let i = args[0] || 0;
-                while (i-- && this.iterators[id].it.valid()) {
-                    if (reverse) {
-                        this.iterators[id].it.prev();
-                    } else {
-                        this.iterators[id].it.next();
-                    }
+
+        const queryArgs: QueryArgs<any> = args[0];
+        if (queryArgs.offset !== undefined) {
+            this.iterators[id] = {it: args.reverse ? this._index.end() : this._index.begin(), r: args.reverse || false, limit: args[1], count: 0};
+            let i = queryArgs.offset;
+            while (i-- && this.iterators[id].it.valid()) {
+                if (args.reverse) {
+                    this.iterators[id].it.prev();
+                } else {
+                    this.iterators[id].it.next();
                 }
-            break;
-            case "range":
-                this.iterators[id] = {it: reverse ? this._index.le(args[0]) : this._index.ge(args[1]), r: reverse};
-            break;
+            }
+        } else {
+            if (queryArgs.reverse) {
+                const end = queryArgs.lt !== undefined ? this._index.lt(queryArgs.lt) : (queryArgs.lte !== undefined ? this._index.le(queryArgs.lte) : this._index.end());
+                this.iterators[id] = {it: end, r: true, limit: queryArgs.limit || -1, end: queryArgs.gt || queryArgs.gte, count: 0};
+            } else {
+                const start = queryArgs.gt !== undefined ? this._index.gt(queryArgs.gt) : (queryArgs.gte !== undefined ? this._index.ge(queryArgs.gte) : this._index.begin());
+                this.iterators[id] = {it: start, r: false, limit: queryArgs.limit || -1, end: queryArgs.lt || queryArgs.lte, count: 0};
+            }
         }
+   
         return id;
     }
 
@@ -503,8 +506,10 @@ export class SnapDatabase {
     }
 
     public nextIterator(id: string): {key: any, done: boolean} {
-        if (this.iterators[id].it.valid()) {
+        const finished = this.iterators[id].limit === -1 ? false : this.iterators[id].count >= this.iterators[id].limit;
+        if (this.iterators[id].it.valid() && !finished) {
             const key = this.iterators[id].it.key();
+            this.iterators[id].count++;
             if (this.iterators[id].r) {
                 this.iterators[id].it.prev();
             } else {
@@ -516,113 +521,6 @@ export class SnapDatabase {
         }
     }
 
-    public getAllKeys(onKey: (key: any) => void, complete: (err?: any) => void, reverse: boolean) {
-        const it = reverse ? this._index.end() : this._index.begin()
-        try {
-            if (!this._index.length()) {
-                complete();
-                return;
-            }
-
-            while (it.valid()) {
-                onKey(it.key());
-                if (reverse) {
-                    it.prev();
-                } else {
-                    it.next();
-                }
-            }
-            complete();
-        } catch (e) {
-            complete(e)
-        }
-    }
-
-    public getAll(onData: (key: any, data: string) => void, complete: (err?: any) => void, reverse: boolean) {
-
-        const it = reverse ? this._index.end() : this._index.begin()
-        try {
-            if (!this._index.length()) {
-                complete();
-                return;
-            }
-            while (it.valid()) {
-                onData(it.key(), this.get(it.key()));
-                if (reverse) {
-                    it.prev();
-                } else {
-                    it.next();
-                }
-            }
-            complete();
-        } catch (e) {
-            complete(e)
-        }
-    }
-
-    public getOffset(offset: number, limit: number, onData: (key: any, data: string) => void, complete: (err?: any) => void, reverse: boolean) {
-        const it = reverse ? this._index.end() : this._index.begin();
-
-        if (!this._index.length()) {
-            complete();
-            return;
-        }
-
-        try {
-            let i = offset || 0;
-            while (i-- && it.valid()) {
-                if (reverse) {
-                    it.prev();
-                } else {
-                    it.next();
-                }
-            }
-    
-            i = 0;
-    
-            while (i < limit && it.valid()) {
-                onData(it.key(), this.get(it.key()));
-                if (reverse) {
-                    it.prev();
-                } else {
-                    it.next();
-                }
-                i++;
-            }
-            complete();
-        } catch(e) {
-            complete(e);
-        }
-    }
-
-    public getRange(lower: any, higher: any, onData: (key: any, data: string) => void, complete: (err?: any) => void, reverse: boolean) {
-
-        if (!this._index.length()) {
-            complete();
-            return;
-        }
-
-        try {
-            const it = reverse ? this._index.le(higher) : this._index.ge(lower);
-
-            let nextKey = it.key();
-    
-            while (it.valid() && reverse ? nextKey >= lower : nextKey <= higher) {
-                onData(nextKey, this.get(nextKey));
-    
-                if (reverse) {
-                    it.prev();
-                } else {
-                    it.next();
-                }
-    
-                nextKey = it.key();
-            }
-            complete();
-        } catch(e) {
-            complete(e)
-        }
-    }
 
     private _listenForCommands() {
 
@@ -644,7 +542,7 @@ export class SnapDatabase {
                     break;
                 case "snap-new-iterator":
                     try {
-                        if (process.send) process.send({ type: "snap-res-done", id: msgId, data: [undefined, this.newIterator(msg.args[0], msg.args[1], msg.args[2])] })
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, data: [undefined, this.newIterator(msg.args[0])] })
                     } catch (e) {
                         if (process.send) process.send({ type: "snap-res-done", id: msgId, data: ["Failed to make iterator!", ""] })
                     }
@@ -689,13 +587,6 @@ export class SnapDatabase {
                         if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "put", data: ["Error writing value!"] })
                     }
                     break;
-                case "snap-get-all-keys":
-                    this.getAllKeys((key) => {
-                        if (process.send) process.send({ type: "snap-res", event: "get-keys", id: msg.id, data: [undefined, key] })
-                    }, (err) => {
-                        if (process.send) process.send({ type: "snap-res-done", event: "get-keys-end", id: msg.id, data: [err] })
-                    }, msg.reverse);
-                    break;
                 case "snap-count":
                     if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "get-count", data: [undefined, this.getCount()] })
                     break;
@@ -710,27 +601,6 @@ export class SnapDatabase {
                 case "snap-end-tx":
                     this.endTX();
                     if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "tx-end", data: [undefined, this.txNum] });
-                    break;
-                case "snap-get-all":
-                    this.getAll((key, value) => {
-                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-all", data: [undefined, {k: key, v: value}] })
-                    }, (err) => {
-                        if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "get-all-end", data: [err] })
-                    }, msg.reverse);
-                    break;
-                case "snap-get-offset":
-                    this.getOffset(msg.offset, msg.limit, (key, value) => {
-                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-offset", data: [undefined, {k: key, v: value}]  });
-                    }, (err) => {
-                        if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "get-offset-end", data: [err] })
-                    }, msg.reverse);
-                    break;
-                case "snap-get-range":
-                    this.getRange(msg.lower, msg.higher, (key, value) => {
-                        if (process.send) process.send({ type: "snap-res", id: msg.id, event: "get-range", data: [undefined, {k: key, v: value}]  })
-                    }, (err) => {
-                        if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "get-range-end", data: [err] })
-                    }, msg.reverse);
                     break;
                 case "snap-close":
                     this.close();
@@ -764,7 +634,7 @@ export class SnapDatabase {
         const it = this._index.begin();
 
         while (it.hasNext()) {
-            this._cache[it.key()] = this.get(it.key(), true);
+            this._cache[it.key()] = this.get(it.key(), true) || "";
             it.next();
         }
     }

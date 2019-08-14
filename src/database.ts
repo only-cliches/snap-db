@@ -468,21 +468,20 @@ export class SnapDatabase {
     }
 
     public iterators: {
-        [key: string]: {it: RedBlackTreeIterator, r: boolean, limit: number, count:  number, end?: any};
+        [key: string]: {it: RedBlackTreeIterator, r: boolean, limit: number, count:  number, end?: any, endE?: any};
     } = {};
 
-    public newIterator(args: QueryArgs<any>): string {
+    public newIterator(queryArgs: QueryArgs<any>): string {
         let id = rand();
         while(this.iterators[id]) {
             id = rand();
         }
 
-        const queryArgs: QueryArgs<any> = args[0];
         if (queryArgs.offset !== undefined) {
-            this.iterators[id] = {it: args.reverse ? this._index.end() : this._index.begin(), r: args.reverse || false, limit: args[1], count: 0};
+            this.iterators[id] = {it: queryArgs.reverse ? this._index.end() : this._index.begin(), r: queryArgs.reverse || false, limit: queryArgs.limit || -1, count: 0};
             let i = queryArgs.offset;
             while (i-- && this.iterators[id].it.valid()) {
-                if (args.reverse) {
+                if (queryArgs.reverse) {
                     this.iterators[id].it.prev();
                 } else {
                     this.iterators[id].it.next();
@@ -491,10 +490,10 @@ export class SnapDatabase {
         } else {
             if (queryArgs.reverse) {
                 const end = queryArgs.lt !== undefined ? this._index.lt(queryArgs.lt) : (queryArgs.lte !== undefined ? this._index.le(queryArgs.lte) : this._index.end());
-                this.iterators[id] = {it: end, r: true, limit: queryArgs.limit || -1, end: queryArgs.gt || queryArgs.gte, count: 0};
+                this.iterators[id] = {it: end, r: true, limit: queryArgs.limit || -1, end: queryArgs.gt, endE: queryArgs.gte, count: 0};
             } else {
                 const start = queryArgs.gt !== undefined ? this._index.gt(queryArgs.gt) : (queryArgs.gte !== undefined ? this._index.ge(queryArgs.gte) : this._index.begin());
-                this.iterators[id] = {it: start, r: false, limit: queryArgs.limit || -1, end: queryArgs.lt || queryArgs.lte, count: 0};
+                this.iterators[id] = {it: start, r: false, limit: queryArgs.limit || -1, end: queryArgs.lt, endE: queryArgs.lte, count: 0};
             }
         }
    
@@ -506,19 +505,30 @@ export class SnapDatabase {
     }
 
     public nextIterator(id: string): {key: any, done: boolean} {
-        const finished = this.iterators[id].limit === -1 ? false : this.iterators[id].count >= this.iterators[id].limit;
-        if (this.iterators[id].it.valid() && !finished) {
+
+        if (this.iterators[id].it.valid()) {
             const key = this.iterators[id].it.key();
-            this.iterators[id].count++;
-            if (this.iterators[id].r) {
-                this.iterators[id].it.prev();
+            const reverse = this.iterators[id].r;
+
+            const limitFinished = this.iterators[id].limit === -1 ? false : this.iterators[id].count >= this.iterators[id].limit;
+            const rangeFinished1 = this.iterators[id].end !== undefined ? (reverse ? key < this.iterators[id].end : key > this.iterators[id].end) : false;
+            const rangeFinished2 = this.iterators[id].endE !== undefined ? (reverse ? key <= this.iterators[id].endE : key >= this.iterators[id].endE) : false;
+    
+            if (!limitFinished && !rangeFinished1 && !rangeFinished2) {
+                this.iterators[id].count++;
+                if (this.iterators[id].r) {
+                    this.iterators[id].it.prev();
+                } else {
+                    this.iterators[id].it.next();
+                }
+                return {key: key, done: false};
             } else {
-                this.iterators[id].it.next();
+                return {key: undefined, done: true};
             }
-            return {key: key, done: false};
         } else {
             return {key: undefined, done: true};
         }
+
     }
 
 
@@ -558,7 +568,7 @@ export class SnapDatabase {
                     try {
                         if (process.send) process.send({ type: "snap-res-done", id: msgId, data: [undefined, this.clearIterator(msg.args[0])] })
                     } catch (e) {
-                        if (process.send) process.send({ type: "snap-res-done", id: msgId, data: ["Failed to get next iterator value!", ""] })
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, data: ["Failed to clear iterator value!", ""] })
                     }
                     break;
                 case "snap-get":

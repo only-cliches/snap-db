@@ -157,13 +157,15 @@ export class SnapDB<K> {
                         delete messageBuffer[msg.id];
                         break;
                     case "snap-clear-done":
-                        this._isReady = true;
+                        
 
                         this._compactor = fork(path.join(__dirname, "compact.js"));
                         this._compactor.on("message", this._onCompactorMessage);
 
                         messageBuffer[msg.id].apply(null, [msg.data]);
                         delete messageBuffer[msg.id];
+                        
+                        this._isReady = true;
                         if (this._hasEvents) this._rse.trigger("clear", { target: this, tx: msg.id, time: Date.now() });
                         break;
                     case "snap-close-done":
@@ -476,7 +478,7 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public range(lower: K, higher: K, onRecord: (key: K, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean) {
-        this._standardKeysAndValues({lt: lower, gt: higher, reverse: reverse}, "get-range", "get-range-end", onRecord, onComplete);
+        this._standardKeysAndValues(reverse ? {lte: higher, gt: lower, reverse: true} : {lt: higher, gte: lower}, "get-range", "get-range-end", onRecord, onComplete);
     }
 
     /**
@@ -487,7 +489,7 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public rangeIt(lower: K, higher: K, reverse?: boolean): Promise<AsyncIterableIterator<[K, string]>> {
-        return this._iterateKeysAndValues({lt: lower, gt: higher, reverse: reverse}, "get-range", "get-range-end");
+        return this._iterateKeysAndValues(reverse ? {lte: higher, gt: lower, reverse: true} : {lt: higher, gte: lower}, "get-range", "get-range-end");
     }
 
     /**
@@ -669,6 +671,7 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public empty(): Promise<any> {
+
         return new Promise((res, rej) => {
             if (!this._isReady) {
                 res();
@@ -807,33 +810,33 @@ export class SnapDB<K> {
                         this._asyncNextIterator(id).then((value) => {
                             if (value.done) {
                                 onComplete();
-                                if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, tx: queryId, time: Date.now(), error: undefined });
+                                if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, query: args, tx: queryId, time: Date.now(), error: undefined });
                             } else {
                                 if (args.values === false) {
-                                    if (this._hasEvents) this._rse.trigger(progressEvent, { target: this, tx: queryId, time: Date.now(), data: { k: value.key, v: undefined } });
+                                    if (this._hasEvents) this._rse.trigger(progressEvent, { target: this, query: args, tx: queryId, time: Date.now(), data: { k: value.key, v: undefined } });
                                     onRecord(value.key, undefined);
                                     i++;
                                     i % 250 ? setImmediate(nextRow) : nextRow();
                                 } else {
                                     this.get(value.key).then((val) => {
                                         onRecord(value.key, val);
-                                        if (this._hasEvents) this._rse.trigger(progressEvent, { target: this, tx: queryId, time: Date.now(), data: { k: value.key, v: val } });
+                                        if (this._hasEvents) this._rse.trigger(progressEvent, { target: this, query: args, tx: queryId, time: Date.now(), data: { k: value.key, v: val } });
                                         i++;
                                         i % 250 ? setImmediate(nextRow) : nextRow();
                                     }).catch((error) => {
-                                        if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, tx: queryId, time: Date.now(), error: error });
+                                        if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, query: args, tx: queryId, time: Date.now(), error: error });
                                         onComplete(error);
                                     });
                                 }
                             }
                         }).catch((error) => {
-                            if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, tx: queryId, time: Date.now(), error: error });
+                            if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, query: args, tx: queryId, time: Date.now(), error: error });
                             onComplete(error);
                         });
                     }
                     nextRow();
                 }).catch((error) => {
-                    if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, tx: queryId, time: Date.now(), error: error });
+                    if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, query: args, tx: queryId, time: Date.now(), error: error });
                     onComplete(error);
                 });
             } else {
@@ -847,12 +850,14 @@ export class SnapDB<K> {
                         } else {
                             onRecord(nextKey.key, this._database.get(nextKey.key));
                         }
+                        nextKey = this._database.nextIterator(id);
                     }
+                    this._database.clearIterator(id);
                     onComplete();
-                    if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, tx: queryId, time: Date.now(), error: undefined });
+                    if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, query: args, tx: queryId, time: Date.now(), error: undefined });
                 } catch(e) {
                     onComplete(e);
-                    if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, tx: queryId, time: Date.now(), error: e });
+                    if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, query: args, tx: queryId, time: Date.now(), error: e });
                 }
             }
         });
@@ -880,15 +885,15 @@ export class SnapDB<K> {
                         let nextKey = await that._asyncNextIterator(id);
                         let nextValue = nextKey.done ? undefined : await that.get(nextKey.key);
                         while (!nextKey.done) {
-                            if (that._hasEvents) that._rse.trigger(progressEvent, { target: that, tx: id, time: Date.now(), data: { k: nextKey, v: nextValue } });
+                            if (that._hasEvents) that._rse.trigger(progressEvent, { target: that, query: args, tx: id, time: Date.now(), data: { k: nextKey, v: nextValue } });
                             yield [nextKey.key, nextValue];
                             nextKey = await that._asyncNextIterator(id);
                             nextValue = nextKey.done ? undefined : await that.get(nextKey.key);
                         }
                         await that._asyncClearIteator(id);
-                        if (that._hasEvents) that._rse.trigger(doneEvent, { target: that, tx: id, time: Date.now(), error: undefined });
+                        if (that._hasEvents) that._rse.trigger(doneEvent, { target: that, query: args, tx: id, time: Date.now(), error: undefined });
                     } catch (e) {
-                        if (that._hasEvents) that._rse.trigger(doneEvent, { target: that, tx: id, time: Date.now(), error: eval });
+                        if (that._hasEvents) that._rse.trigger(doneEvent, { target: that, query: args, tx: id, time: Date.now(), error: eval });
                         throw e;
                     }
 
@@ -898,16 +903,16 @@ export class SnapDB<K> {
                         let nextKey = that._database.nextIterator(id);
                         let nextValue = nextKey.done ? undefined : await that.get(nextKey.key);
                         while (!nextKey.done) {
-                            if (that._hasEvents) that._rse.trigger(progressEvent, { target: that, tx: id, time: Date.now(), data: { k: nextKey, v: nextValue } });
+                            if (that._hasEvents) that._rse.trigger(progressEvent, { target: that, query: args, tx: id, time: Date.now(), data: { k: nextKey, v: nextValue } });
                             yield [nextKey.key, nextValue];
                             nextKey = that._database.nextIterator(id);
                             nextValue = nextKey.done ? undefined : await that.get(nextKey.key);
                         }
                         that._database.clearIterator(id);
 
-                        if (that._hasEvents) that._rse.trigger(doneEvent, { target: that, tx: id, time: Date.now(), error: undefined });
+                        if (that._hasEvents) that._rse.trigger(doneEvent, { target: that, query: args, tx: id, time: Date.now(), error: undefined });
                     } catch (e) {
-                        if (that._hasEvents) that._rse.trigger(doneEvent, { target: that, tx: id, time: Date.now(), error: e });
+                        if (that._hasEvents) that._rse.trigger(doneEvent, { target: that, query: args, tx: id, time: Date.now(), error: e });
                         throw e;
                     }
                 }

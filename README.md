@@ -47,11 +47,9 @@ const db = new SnapDB({
     key: "int", // key type, can be "int", "string" or "float"
 });
 
-// wait for db to be ready
-db.ready().then(() => {
-    // put a record
-    return db.put(20, "hello");
-}).then(() => {
+
+// put a record
+db.put(20, "hello").then(() => {
     // get a record
     return db.get(20);
 }).then((data) => {

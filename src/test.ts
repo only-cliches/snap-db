@@ -20,27 +20,28 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
 
     describe(testName, () => {
         it("Put Data", (done: MochaDone) => {
+            const size = 1000;
             Promise.all([db_str, db_int, db_flt].map((s, i) => {
-                return s.ready().then(() => {
-                    const dataKey = ["str", "int", "flt"][i];
-                    data[dataKey] = [];
-                    for (let k = 0; k < 1000; k++) {
-                        switch (i) {
-                            case 0:
-                                data[dataKey].push([makeid(), makeid()]);
-                                break;
-                            case 1:
-                                data[dataKey].push([k, makeid()]);
-                                break;
-                            case 2:
-                                data[dataKey].push([k + (Math.round(Math.random() * 8) / 10), makeid()]);
-                                break;
-                        }
-                    } ``
-                    // scramble for insert
-                    data[dataKey] = data[dataKey].sort((a, b) => Math.random() > 0.5 ? 1 : -1);
-                    return Promise.all(data[dataKey].map(k => s.put(k[0], k[1])))
-                });
+
+                const dataKey = ["str", "int", "flt"][i];
+                data[dataKey] = [];
+                for (let k = 0; k < size; k++) {
+                    switch (i) {
+                        case 0:
+                            data[dataKey].push([makeid(), makeid()]);
+                            break;
+                        case 1:
+                            data[dataKey].push([k, makeid()]);
+                            break;
+                        case 2:
+                            data[dataKey].push([k + (Math.round(Math.random() * 8) / 10), makeid()]);
+                            break;
+                    }
+                } ``
+                // scramble for insert
+                data[dataKey] = data[dataKey].sort((a, b) => Math.random() > 0.5 ? 1 : -1);
+                return Promise.all(data[dataKey].map(k => s.put(k[0], k[1])))
+
             })).then(() => {
                 Promise.all([
                     db_str.getCount(),
@@ -49,9 +50,9 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
                 ]).then((result) => {
                     try {
                         expect(result).to.deep.equal([
-                            1000,
-                            1000,
-                            1000
+                            size,
+                            size,
+                            size
                         ], "Put failed!");
                         done();
                     } catch (e) {

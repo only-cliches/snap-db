@@ -592,7 +592,11 @@ export class SnapDB<K> {
             let values: any[] = [];
             this.getAll((key, value) => {
                 values.push([key, value]);
-            }, () => {
+            }, (err) => {
+                if (err) {
+                    rej(err);
+                    return;
+                }
                 async function* loopValues() {
                     let i = 0;
                     while(i < values.length) {
@@ -655,7 +659,11 @@ export class SnapDB<K> {
             let values: any[] = [];
             this.range(lower, higher, (key, value) => {
                 values.push([key, value]);
-            }, () => {
+            }, (err) => {
+                if (err) {
+                    rej(err);
+                    return;
+                }
                 async function* loopValues() {
                     let i = 0;
                     while(i < values.length) {
@@ -720,7 +728,11 @@ export class SnapDB<K> {
             let values: any[] = [];
             this.offset(offset, limit, (key, value) => {
                 values.push([key, value]);
-            }, () => {
+            }, (err) => {
+                if (err) {
+                    rej(err);
+                    return;
+                }
                 async function* loopValues() {
                     let i = 0;
                     while(i < values.length) {

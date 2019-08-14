@@ -648,7 +648,7 @@ export class SnapDB<K> {
                             if (that._hasEvents) that._rse.trigger(progressEvent, { target: that, tx: id, time: Date.now(), data: { k: nextKey, v: nextValue } });
                             yield [nextKey.key, nextValue];
                             nextKey = await that._asyncNextIterator(id);
-                            nextValue = await that.get(nextKey.key);
+                            nextValue = nextKey.done ? undefined : await that.get(nextKey.key);
                         }
                         await that._asyncClearIteator(id);
                         if (that._hasEvents) that._rse.trigger(doneEvent, { target: that, tx: id, time: Date.now(), error: undefined });
@@ -666,7 +666,7 @@ export class SnapDB<K> {
                             if (that._hasEvents) that._rse.trigger(progressEvent, { target: that, tx: id, time: Date.now(), data: { k: nextKey, v: nextValue } });
                             yield [nextKey.key, nextValue];
                             nextKey = that._database.nextIterator(id);
-                            nextValue = await that.get(nextKey.key);
+                            nextValue = nextKey.done ? undefined : await that.get(nextKey.key);
                         }
                         that._database.clearIterator(id);
 

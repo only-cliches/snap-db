@@ -3,21 +3,13 @@ import { fork, ChildProcess } from "child_process";
 import { VERSION, fileName as fNameFN } from "./common";
 import { ReallySmallEvents } from "./rse";
 import * as fs from "fs";
-import { SnapDatabase } from "./database";
+import { SnapDatabase, rand } from "./database";
 
 const messageBuffer: {
     [messageId: string]: (values: string[]) => void;
 } = {};
 
-export const rand = () => {
-    var text = "";
-    var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-    for (var i = 0; i < 6; i++)
-        text += possible.charAt(Math.floor(Math.random() * possible.length));
-
-    return text;
-}
 
 export interface SnapEvent {
     target: SnapDB<any>,
@@ -420,6 +412,45 @@ export class SnapDB<K> {
         });
     }
 
+    private _asyncNewIterator(mode: "all" | "offset" | "range", args: any[], reverse: boolean): Promise<string> {
+        return new Promise((res, rej) => {
+            const msgId = this._msgID((data) => {
+                if (data[0]) {
+                    rej(data[0]);
+                } else {
+                    res(data[1]);
+                }
+            })
+            this._worker.send({ type: "snap-new-iterator", args: [mode, args, reverse], id: msgId });
+        });
+    }
+
+    private _asyncNextIterator(id: string): Promise<{ key: K, done: boolean }> {
+        return new Promise((res, rej) => {
+            const msgId = this._msgID((data) => {
+                if (data[0]) {
+                    rej(data[0]);
+                } else {
+                    res(data[1]);
+                }
+            })
+            this._worker.send({ type: "snap-next-iterator", args: [id], id: msgId });
+        });
+    }
+
+    private _asyncClearIteator(id: string): Promise<void> {
+        return new Promise((res, rej) => {
+            const msgId = this._msgID((data) => {
+                if (data[0]) {
+                    rej(data[0]);
+                } else {
+                    res();
+                }
+            })
+            this._worker.send({ type: "snap-clear-iterator", args: [id], id: msgId });
+        });
+    }
+
     /**
      * Async Iterable version of get all keys.
      * 
@@ -428,22 +459,46 @@ export class SnapDB<K> {
      * @returns {Promise<AsyncIterableIterator<K>>}
      * @memberof SnapDB
      */
-    public getAllKeysAsync(reverse?: boolean):Promise<AsyncIterableIterator<K>>  {
-        return new Promise((res, rej) => {
-            let keys: any[] = [];
-            this.getAllKeys((key) => {
-                keys.push(key);
-            }, () => {
-                async function* loopKeys() {
-                    let i = 0;
-                    while(i < keys.length) {
-                        yield keys[i];
-                        i++;
+    public getAllKeysAsync(reverse?: boolean): Promise<AsyncIterableIterator<K>> {
+        return this._doWhenReady((res, rej) => {
+            const that = this;
+            res(async function* () {
+                if (that._worker) {
+                    const id = await that._asyncNewIterator("all", [], reverse || false);
+                    try {
+                        let nextKey = await that._asyncNextIterator(id);
+                        while (!nextKey.done) {
+                            yield nextKey.key;
+                            if (that._hasEvents) that._rse.trigger("get-keys", { target: that, tx: id, time: Date.now(), data: nextKey.key });
+                            nextKey = await that._asyncNextIterator(id);
+                        }
+                        await that._asyncClearIteator(id);
+
+                        if (that._hasEvents) that._rse.trigger("get-keys-end", { target: that, tx: id, time: Date.now(), error: undefined });
+                    } catch (e) {
+                        if (that._hasEvents) that._rse.trigger("get-keys-end", { target: that, tx: id, time: Date.now(), error: e });
+                        throw e;
+                    }
+
+                } else {
+                    const id = that._database.newIterator("all", [], reverse || false);
+                    try {
+                        let nextKey = that._database.nextIterator(id);
+                        while (!nextKey.done) {
+                            yield nextKey.key;
+                            if (that._hasEvents) that._rse.trigger("get-keys", { target: that, tx: id, time: Date.now(), data: nextKey.key });
+                            nextKey = that._database.nextIterator(id)
+                        }
+                        that._database.clearIterator(id);
+
+                        if (that._hasEvents) that._rse.trigger("get-keys-end", { target: that, tx: id, time: Date.now(), error: undefined });
+                    } catch (e) {
+                        if (that._hasEvents) that._rse.trigger("get-keys-end", { target: that, tx: id, time: Date.now(), error: e });
+                        throw e;
                     }
                 }
-                res(loopKeys());
-            }, reverse);
-        })
+            });
+        });
     }
 
     /**
@@ -580,6 +635,51 @@ export class SnapDB<K> {
         });
     }
 
+    private _asyncKeysAndValues(mode: "all"|"offset"|"range", args: any[], reverse: boolean, progressEvent: string, doneEvent: string): Promise<AsyncIterableIterator<[K, string]>> {
+        return this._doWhenReady((res, rej) => {
+            const that = this;
+            res(async function* () {
+                if (that._worker) {
+                    const id = await that._asyncNewIterator(mode, args, reverse || false);
+                    try {
+                        let nextKey = await that._asyncNextIterator(id);
+                        let nextValue = nextKey.done ? undefined : await that.get(nextKey.key);
+                        while (!nextKey.done) {
+                            if (that._hasEvents) that._rse.trigger(progressEvent, { target: that, tx: id, time: Date.now(), data: { k: nextKey, v: nextValue } });
+                            yield [nextKey.key, nextValue];
+                            nextKey = await that._asyncNextIterator(id);
+                            nextValue = await that.get(nextKey.key);
+                        }
+                        await that._asyncClearIteator(id);
+                        if (that._hasEvents) that._rse.trigger(doneEvent, { target: that, tx: id, time: Date.now(), error: undefined });
+                    } catch (e) {
+                        if (that._hasEvents) that._rse.trigger(doneEvent, { target: that, tx: id, time: Date.now(), error: eval });
+                        throw e;
+                    }
+
+                } else {
+                    const id = that._database.newIterator(mode, args, reverse || false);
+                    try {
+                        let nextKey = that._database.nextIterator(id);
+                        let nextValue = nextKey.done ? undefined : await that.get(nextKey.key);
+                        while (!nextKey.done) {
+                            if (that._hasEvents) that._rse.trigger(progressEvent, { target: that, tx: id, time: Date.now(), data: { k: nextKey, v: nextValue } });
+                            yield [nextKey.key, nextValue];
+                            nextKey = that._database.nextIterator(id);
+                            nextValue = await that.get(nextKey.key);
+                        }
+                        that._database.clearIterator(id);
+
+                        if (that._hasEvents) that._rse.trigger(doneEvent, { target: that, tx: id, time: Date.now(), error: undefined });
+                    } catch (e) {
+                        if (that._hasEvents) that._rse.trigger(doneEvent, { target: that, tx: id, time: Date.now(), error: e });
+                        throw e;
+                    }
+                }
+            });
+        });
+    }
+
     /**
      * Async Iterable version of getAll.
      *
@@ -587,26 +687,8 @@ export class SnapDB<K> {
      * @returns {Promise<AsyncIterableIterator<[K, string]>>}
      * @memberof SnapDB
      */
-    public getAllAsync(reverse?: boolean):Promise<AsyncIterableIterator<[K, string]>>  {
-        return new Promise((res, rej) => {
-            let values: any[] = [];
-            this.getAll((key, value) => {
-                values.push([key, value]);
-            }, (err) => {
-                if (err) {
-                    rej(err);
-                    return;
-                }
-                async function* loopValues() {
-                    let i = 0;
-                    while(i < values.length) {
-                        yield values[i];
-                        i++;
-                    }
-                }
-                res(loopValues());
-            }, reverse);
-        })
+    public getAllAsync(reverse?: boolean): Promise<AsyncIterableIterator<[K, string]>> {
+        return this._asyncKeysAndValues("all", [], reverse || false, "get-all", "get-all-end");
     }
 
     /**
@@ -654,26 +736,8 @@ export class SnapDB<K> {
      * @returns {Promise<AsyncIterableIterator<[K, string]>>}
      * @memberof SnapDB
      */
-    public rangeAsync(lower: K, higher: K, reverse?: boolean):Promise<AsyncIterableIterator<[K, string]>>  {
-        return new Promise((res, rej) => {
-            let values: any[] = [];
-            this.range(lower, higher, (key, value) => {
-                values.push([key, value]);
-            }, (err) => {
-                if (err) {
-                    rej(err);
-                    return;
-                }
-                async function* loopValues() {
-                    let i = 0;
-                    while(i < values.length) {
-                        yield values[i];
-                        i++;
-                    }
-                }
-                res(loopValues());
-            }, reverse);
-        })
+    public rangeAsync(lower: K, higher: K, reverse?: boolean): Promise<AsyncIterableIterator<[K, string]>> {
+        return this._asyncKeysAndValues("range", [lower, higher], reverse || false, "get-range", "get-range-end");
     }
 
     /**
@@ -723,26 +787,8 @@ export class SnapDB<K> {
      * @returns {Promise<AsyncIterableIterator<[K, string]>>}
      * @memberof SnapDB
      */
-    public offsetAsync(offset: number, limit: number, reverse?: boolean):Promise<AsyncIterableIterator<[K, string]>>  {
-        return new Promise((res, rej) => {
-            let values: any[] = [];
-            this.offset(offset, limit, (key, value) => {
-                values.push([key, value]);
-            }, (err) => {
-                if (err) {
-                    rej(err);
-                    return;
-                }
-                async function* loopValues() {
-                    let i = 0;
-                    while(i < values.length) {
-                        yield values[i];
-                        i++;
-                    }
-                }
-                res(loopValues());
-            }, reverse);
-        })
+    public offsetAsync(offset: number, limit: number, reverse?: boolean): Promise<AsyncIterableIterator<[K, string]>> {
+        return this._asyncKeysAndValues("offset", [offset, limit], reverse || false, "get-offset", "get-offset-end");
     }
 
     /**

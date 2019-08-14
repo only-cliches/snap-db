@@ -2,8 +2,17 @@ import * as fs from "fs";
 import * as path from "path";
 import { SnapManifest, writeManifestUpdate, fileName, VERSION, throttle, SnapIndex, NULLBYTE, tableGenerator } from "./common";
 import { BloomFilter, MurmurHash3, IbloomFilterObj } from "./bloom";
-import { createRBTree, RedBlackTree } from "./rbtree";
+import { createRBTree, RedBlackTree, RedBlackTreeIterator } from "./rbtree";
 
+export const rand = () => {
+    var text = "";
+    var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+    for (var i = 0; i < 6; i++)
+        text += possible.charAt(Math.floor(Math.random() * possible.length));
+
+    return text;
+}
 
 export class SnapDatabase {
 
@@ -468,6 +477,55 @@ export class SnapDatabase {
         this._doingTx = false;
     }
 
+    public iterators: {
+        [key: string]: {it: RedBlackTreeIterator, r: boolean};
+    } = {};
+
+    public newIterator(mode: "all"|"offset"|"range", args: any[], reverse: boolean): string {
+        let id = rand();
+        while(this.iterators[id]) {
+            id = rand();
+        }
+        switch(mode) {
+            case "all":
+                this.iterators[id] = {it: reverse ? this._index.end() : this._index.begin(), r: reverse};
+            break;
+            case "offset":
+                this.iterators[id] = {it: reverse ? this._index.end() : this._index.begin(), r: reverse};
+                let i = args[0] || 0;
+                while (i-- && this.iterators[id].it.valid()) {
+                    if (reverse) {
+                        this.iterators[id].it.prev();
+                    } else {
+                        this.iterators[id].it.next();
+                    }
+                }
+            break;
+            case "range":
+                this.iterators[id] = {it: reverse ? this._index.le(args[0]) : this._index.ge(args[1]), r: reverse};
+            break;
+        }
+        return id;
+    }
+
+    public clearIterator(id: string) {
+        delete this.iterators[id];
+    }
+
+    public nextIterator(id: string): {key: any, done: boolean} {
+        if (this.iterators[id].it.valid()) {
+            const key = this.iterators[id].it.key();
+            if (this.iterators[id].r) {
+                this.iterators[id].it.prev();
+            } else {
+                this.iterators[id].it.next();
+            }
+            return {key: key, done: false};
+        } else {
+            return {key: undefined, done: true};
+        }
+    }
+
     public getAllKeys(onKey: (key: any) => void, complete: (err?: any) => void, reverse: boolean) {
         const it = reverse ? this._index.end() : this._index.begin()
         try {
@@ -522,7 +580,7 @@ export class SnapDatabase {
 
         try {
             let i = offset || 0;
-            while (i--) {
+            while (i-- && it.valid()) {
                 if (reverse) {
                     it.prev();
                 } else {
@@ -593,6 +651,27 @@ export class SnapDatabase {
                     break;
                 case "do-compact":
                     this.flushLog(true);
+                    break;
+                case "snap-new-iterator":
+                    try {
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, data: [undefined, this.newIterator(msg.args[0], msg.args[1], msg.args[2])] })
+                    } catch (e) {
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, data: ["Failed to make iterator!", ""] })
+                    }
+                    break;
+                case "snap-next-iterator":
+                    try {
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, data: [undefined, this.nextIterator(msg.args[0])] })
+                    } catch (e) {
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, data: ["Failed to get next iterator value!", ""] })
+                    }
+                    break;
+                case "snap-clear-iterator":
+                    try {
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, data: [undefined, this.clearIterator(msg.args[0])] })
+                    } catch (e) {
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, data: ["Failed to get next iterator value!", ""] })
+                    }
                     break;
                 case "snap-get":
                     try {

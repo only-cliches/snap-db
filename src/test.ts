@@ -110,7 +110,27 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
                 }
             });
         });
+/*
+        it("Integer: Offset Select Async", (done: MochaDone) => {
+            let dataFromDB: any[] = [];
+            const main = async () => {
+                const it = await db_int.offsetAsync(100, 10);
 
+                for await (const data of it) {
+                    dataFromDB.push(data);
+                }
+
+                try {
+                    const genData = data["int"].slice(100, 110);
+                    expect(dataFromDB).to.deep.equal(genData, "Integer offset select failed!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            }
+            main();
+        });
+*/
         it("Integer: Offset Select (Reverse)", (done: MochaDone) => {
             let dataFromDB: any[] = [];
             db_int.offset(100, 10, (key, value) => {

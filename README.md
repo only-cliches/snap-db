@@ -42,19 +42,23 @@ npm i snap-db --save
 ```ts
 import { SnapDB } from "snap-db";
 
-const db = new SnapDB({
-    dir: "my_db", // database folder
-    key: "int", // key type, can be "int", "string" or "float"
-});
+const example = async () => {
 
+  // setup database
+  const db = new SnapDB({
+      dir: "my_db", // database folder
+      key: "int", // key type, can be "int", "string" or "float"
+  });
 
-// put a record
-db.put(20, "hello").then(() => {
-    // get a record
-    return db.get(20);
-}).then((data) => {
-    console.log(data) // "hello"
-})
+  // put a record
+  await db.put(20, "hello");
+
+  // get a record
+  const data = await db.get(20);
+  console.log(data) // "hello"
+
+}
+example();
 ```
 
 ## API
@@ -88,37 +92,159 @@ This is `true` when a transaction is active, `false` otherwise.
 ### Class Methods
 
 #### .ready():Promise\<void\>
-Call on database initialization to know when the database is ready.  Will return immediately if the database is already ready.
+Call on database initialization to know when the database is ready.  Will return immediately if the database is already ready.  This is optional, queries will queue until the database is ready to use, then execute in order.
+##### Example
+```ts
+const db = new SnapDB({
+  dir: "my_db", // database folder
+  key: "int", // key type, can be "int", "string" or "float"
+});
+await db.ready();
+// database ready for queries
+```
 
 #### .put(key: any, data: string): Promise\<void\>
-Puts data into the database at the provided key.  Replaces entirely whatever value was there before.
+Puts data into the database at the provided key.  Replaces entirely whatever value was there before or creates new value at that key.
+##### Example
+```ts
+await db.put(20, "hello")
+// "hello" is now at key 20
+await db.put(20, "");
+// "" is now at key 20
+```
 
 #### .get(key: any):Promise\<string\>
 Used to get the value of a single key.
+##### Example
+```ts
+await db.put(20, "hello")
+// "hello" is now at key 20
+
+const data = await db.get(20);
+console.log(data) // "hello"
+```
 
 #### .delete(key: any): Promise\<void\>
 Deletes a key and it's value from the database.
+##### Example
+```ts
+await db.put(20, "hello")
+// "hello" is now at key 20
+
+await db.delete(20);
+// there is no value at key 20, and key 20 no longer exists.
+```
 
 #### .getAll(onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
-Gets all the keys & values in the database, use the callback functions to capture the data. Can optionally return the keys/values in reverse order.
+Gets all the keys & values in the database in key order, use the callback functions to capture the data. Can optionally return the keys/values in reverse order.
+##### Example
+```ts
+await db.put(20, "hello 2");
+await db.put(10, "hello 1");
+
+
+db.getAll((key, data) => {
+  console.log(key, data);
+}, (err) => {
+  console.log("DONE");
+}, false);
+
+// 10, "hello 1"
+// 20, "hello 2"
+// DONE
+```
 
 #### .getAllKeys(onKey: (key: any) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
 Gets all the keys in the database, use the callback functions to capture the data.  Can optionally return the keys in reverse order.  This is orders of magnitude faster than the `getAll` method.
+##### Example
+```ts
+await db.put(20, "hello 2");
+await db.put(10, "hello 1");
+
+
+db.getAllKeys((key) => {
+  console.log(key);
+}, (err) => {
+  console.log("DONE");
+}, false);
+
+// 10
+// 20
+// DONE
+```
 
 #### .range(lower: any, higher: any, onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean)
 Gets a range of rows between the provided lower and upper values.  Can optionally return the results in reverse.  
+##### Example
+```ts
+await db.put(20, "hello 2");
+await db.put(10, "hello 1");
+
+
+db.range(9, 12, (key, data) => {
+  console.log(key, data);
+}, (err) => {
+  console.log("DONE");
+}, false);
+
+// 10, "hello 1"
+// DONE
+```
 
 #### .offset(offset: number, limit: number, onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean)
 Gets a section of rows provided the offset and limit you'd like.  Can optionally return the results in reverse order from the bottom of the list.
+##### Example
+```ts
+await db.put(30, "hello 3");
+await db.put(20, "hello 2");
+await db.put(10, "hello 1");
+
+
+db.offset(1, 2, (key, data) => {
+  console.log(key, data);
+}, (err) => {
+  console.log("DONE");
+}, false);
+
+// 20, "hello 2"
+// 30, "hello 3"
+// DONE
+```
 
 #### .getCount(): Promise\<number\>
 Gets the total number of records in the database.  This uses a *very fast* lookup method.
+##### Example
+```ts
+await db.put(30, "hello 3");
+await db.put(20, "hello 2");
+await db.put(10, "hello 1");
+
+
+const total = await db.getCount();
+console.log(total) // 3
+```
 
 #### .empty(): Promise\<void\>
 Clears all keys and values from the database.  All other query types will fail while the database is being emptied, wait for this to complete before attempting to write new data to the database.
+##### Example
+```ts
+await db.put(30, "hello 3");
+await db.put(20, "hello 2");
+await db.put(10, "hello 1");
+
+await db.empty(); // remove everything
+
+const total = await db.getCount();
+console.log(total) // 0
+```
 
 #### .close(): Promise\<void\>
 Closes the database, clears the keys from memory and kills the worker threads.  This isn't reversible, you have to create a new `SnapDB` instance to get things going again.
+##### Example
+```ts
+await db.close();
+// database is closed, can't do anything further with it.
+```
 
 #### .flushLog(): Promise\<void\>
 Forces the log to be flushed into database files and clears the memtable.  Normally the database waits until the log/memtable is 2MB or larger before flushing them.  Once the log is flushed into disk files a compaction is performed if it's needed.
@@ -127,18 +253,57 @@ The log files and database files are both written to disk in a safe, robust mann
 
 - Manually perform compactions at times that are more convenient than waiting for the system to perform the compactions when the log fills up.  
 - If you have `autoFlush` off you'll need this method to flush the log/memtable periodically.
+##### Example
+```ts
+await db.put(30, "hello 3");
+await db.put(20, "hello 2");
+await db.put(10, "hello 1");
 
-#### .begin_transaction(): Promise\<void\>
+await db.flushLog();
+// above 3 "put" commands are now flushed from the log to level files.
+```
+
+#### .startTx(): Promise\<void\>
 Start a database transaction.
 
-#### .end_transaction(): Promise\<void\>
+#### .endTx(): Promise\<void\>
 End a database transaction, making sure it's been flushed to the filesystem.
+##### Example
+```ts
+await db.startTx();
+
+await db.put(30, "hello 3");
+await db.put(20, "hello 2");
+await db.put(10, "hello 1");
+await db.delete(10);
+
+await db.endTx();
+// above 4 commands are now atomically updated into the database
+```
 
 #### .on(event: string, callback: (eventData) => void): void
 Subscribe to a specific event.
 
 #### .off(event: string, callback: (eventData) => void): void
 Unsubscribe from a specific event.
+##### Example
+```ts
+// listen for compactions in the first 10 seconds
+const compactStart = (ev) => {
+  console.log("Database is compacting!");
+}
+const compactEnd = (ev) => {
+  console.log("Database is done compacting!");
+}
+db.on("compact-start", compactStart);
+db.on("compact-end", compactEnd);
+
+setTimeout(() => {
+  db.off("compact-start", compactStart);
+  db.off("compact-end", compactEnd);
+}, 10 000);
+```
+
 
 ### Supported Events
 You can listen for the following events:

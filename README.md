@@ -258,7 +258,7 @@ await db.endTx();
 
 </details>
 
-## SnapDB Query API
+## Query API
 
 <details><summary>.query methods</summary>
 

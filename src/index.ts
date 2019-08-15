@@ -299,9 +299,9 @@ export class SnapDB<K> {
                     if (data[0]) {
                         rej(data[0]);
                     } else {
-                        res(data[1]);
+                        res(data[1] === null ? undefined : data[1]);
                     }
-                    if (callback) callback(data[0], data[1]);
+                    if (callback) callback(data[0], data[1] === null ? undefined : data[1]);
                 })
 
                 this._worker.send({ type: "snap-get", key: key, id: msgId });
@@ -309,8 +309,8 @@ export class SnapDB<K> {
 
                 try {
                     const data = this._database.get(key);
-                    res(data);
-                    if (callback) callback(undefined, data);
+                    res(data === null ? undefined : data);
+                    if (callback) callback(undefined, data === null ? undefined : data);
                     if (this._hasEvents) this._rse.trigger("get", { target: this, tx: rand(), time: Date.now(), data: data });
                 } catch (e) {
                     rej(e);

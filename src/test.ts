@@ -63,14 +63,16 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
             });
         }).timeout(30000);
 
-        it("Get non-exist key", async (done: MochaDone) => {
-            try {
-                const val = await db_str.get('non-exist-key')
-                expect(val).to.equal(undefined, "get a non-exist key should return undefined");
-                done();
-            } catch (e) {
-                done(e);
-            }
+        it("Get non-exist key", (done: MochaDone) => {
+            db_str.get('non-exist-key').then((val) => {
+                try {
+                    expect(val).to.equal(undefined, "get a non-exist key should return undefined");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            }).catch(done);
+
         });
 
         it("Integer: Sorted Keys", (done: MochaDone) => {
@@ -362,7 +364,6 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
 
             }, true);
         });
-
     });
 
 }

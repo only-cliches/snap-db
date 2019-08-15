@@ -1,4 +1,4 @@
-# [1.1.2]
+# [1.1.2] 08-14-2019
 - Resolved issue [#2](https://github.com/ClickSimply/snap-db/issues/2), `.ready` no longer needs to be called to start using the database.
 - Resolved issue [#1](https://github.com/ClickSimply/snap-db/issues/1), added async iterable versions of all looping functions.
 - Resolved issue [#3](https://github.com/ClickSimply/snap-db/issues/3), keys that don't exist will now return undefined on `get` queries.

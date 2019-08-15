@@ -75,6 +75,15 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
 
         });
 
+        it("Call close() for multiple times", (done: MochaDone) => {
+            const db = new SnapDB<string>({ dir: "testDB-close", key: "string" })
+            db.close()
+            .then(() => db.close())
+            .then(() => done())
+            .catch(done);
+        };
+
+ 
         it("Integer: Sorted Keys", (done: MochaDone) => {
             data["int"] = data["int"].sort((a, b) => a[0] > b[0] ? 1 : -1);
             let dataFromDB: any[] = [];

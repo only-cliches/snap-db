@@ -81,7 +81,7 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
             .then(() => db.close())
             .then(() => done())
             .catch(done);
-        };
+        });
 
  
         it("Integer: Sorted Keys", (done: MochaDone) => {

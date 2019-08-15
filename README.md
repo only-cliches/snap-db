@@ -693,16 +693,24 @@ You can listen for the following events:
 | ready          | After the database is ready to query.                       |
 | get            | After a value is retrieved with `.get`.                     |
 | put            | After a value is set with `.put`.                           |
-| delete         | After a value is deleted with `.delete`.                    |
+| delete         | After a value is deleted with `.del` or `.delete`.          |
 | get-keys       | For every key when `.getAllKeys` is called.                 |
 | get-keys-end   | After the end of a `.getAllKeys` query.                     |
 | get-count      | After `.getCount` is query is returned.                     |
+| get-query      | For every key value pair returned when `.query` is called.  |
+| get-query-end  | After the end of a `.query` query.                          |
 | get-all        | For every key value pair returned when `.getAll` is called. |
 | get-all-end    | After the end of a `.getAll` query.                         |
 | get-offset     | For every key value pair returned when `.offset` is called. |
 | get-offset-end | After the end of a `.offset` query.                         |
 | get-range      | For every key value pair returned when `.range` is called.  |
 | get-range-end  | After the end of a `.range` query.                          |
+| read-stream      | For every key value pair returned when `.createReadStream` is called.  |
+| read-stream-end  | After the end of a `.createReadStream` query.                          |
+| read-key-stream      | For every key value pair returned when `.createKeyStream` is called.  |
+| read-key-stream-end  | After the end of a `.createKeyStream` query.                          |
+| read-value-stream      | For every key value pair returned when `createValueStream` is called.  |
+| read-value-stream-end  | After the end of a `createValueStream` query.                          |
 | tx-start       | After a transaction is started.                             |
 | tx-end         | After a transaction completes.                              |
 | close          | After the database is closed.                               |

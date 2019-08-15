@@ -76,6 +76,7 @@ export class SnapDB<K> {
     private _compactId: string;
     private _database: SnapDatabase;
     private _autoFlush: boolean | number;
+    private _isClosed: boolean;
 
     /**
      *Creates an instance of SnapDB.
@@ -184,6 +185,7 @@ export class SnapDB<K> {
 
         // trigger database ready
         const checkReady = () => {
+            if (this._isClosed) return;
             if ((this._database && this._database.ready) || this._isReady) {
                 this._isReady = true;
                 if (this._hasEvents) {
@@ -246,6 +248,8 @@ export class SnapDB<K> {
             }
 
             const checkDone = () => {
+                if (this.isClosed) return;
+
                 if (this.isCompacting) {
                     setTimeout(checkDone, 100);
                 } else {
@@ -257,11 +261,23 @@ export class SnapDB<K> {
         })
     }
 
+    /**
+     * Returns `true` if the database is ready, `false` otherwise.
+     *
+     * @returns {boolean}
+     * @memberof SnapDB
+     */
     public isOpen(): boolean {
         if (this._isReady) return true;
         return false;
     }
 
+    /**
+     * Returns `true` if the database isn't ready, `false` otherwise.
+     *
+     * @returns {boolean}
+     * @memberof SnapDB
+     */
     public isClosed(): boolean {
         if (this._isReady) return false;
         return true;
@@ -461,6 +477,7 @@ export class SnapDB<K> {
                     }
                 }
                 const check = () => {
+                    if (this._isClosed) return;
                     if (this.isTx) {
                         setTimeout(check, 100);
                     } else {
@@ -858,12 +875,15 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public close(callback?: (error?: any) => void): Promise<any> {
+
+        if (this._isClosed) {
+            if (callback) callback();
+            return Promise.reject();
+        }
+
+        this._isClosed = true;
         return new Promise((res, rej) => {
-            if (!this._isReady) {
-                if (callback) callback();
-                res();
-                return;
-            }
+
             if (this._worker) {
                 const msgId = this._msgID((data) => {
                     this._worker.kill();

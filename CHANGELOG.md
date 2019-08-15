@@ -2,6 +2,7 @@
 - Resolved issue [#2](https://github.com/ClickSimply/snap-db/issues/2), `.ready` no longer needs to be called to start using the database.
 - Resolved issue [#1](https://github.com/ClickSimply/snap-db/issues/1), added async iterable versions of all looping functions.
 - Resolved issue [#3](https://github.com/ClickSimply/snap-db/issues/3), keys that don't exist will now return undefined on `get` queries.
+- Resolved issue [#5](https://github.com/ClickSimply/snap-db/issues/5), node will always exit after the database is closed.
 - Cleaned up API to make it more consistent.  Old methods are kept around to prevent breaking changes.
 - Major refactoring.
 - Improved documentation and code comments.

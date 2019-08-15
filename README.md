@@ -22,6 +22,8 @@ Uses synchronous filesystem methods to exclusively perform append writes to disk
 - Zero compiling.
 - Zero configuring.
 - ACID Compliant with transaction support.
+- 99% API Compatible With LevelDB/RocksDB.
+- Multiple ways to query data.
 - Optionally control compaction manually.
 - Constant time range & offset/limit queries.
 - Typescript & Babel friendly.
@@ -91,6 +93,9 @@ This is `true` when a transaction is active, `false` otherwise.
 
 ### Class Methods
 
+
+<details><summary>.ready</summary>
+
 #### .ready():Promise\<void\>
 Call on database initialization to know when the database is ready.  Will return immediately if the database is already ready.  This is optional, queries will queue until the database is ready to use, then execute in order.
 
@@ -103,8 +108,26 @@ await db.ready();
 // database ready for queries
 ```
 
-#### .put(key: any, data: string): Promise\<void\>
-Puts data into the database at the provided key.  Replaces entirely whatever value was there before or creates new value at that key.
+</details>
+
+<details><summary>.isOpen</summary>
+
+#### .isOpen(): boolean
+Returns `true` if the database is ready, `false` otherwise.
+
+</details>
+
+<details><summary>.isClosed</summary>
+
+#### .isClosed(): boolean 
+Returns `true` if the database isn't ready, `false` otherwise.
+
+</details>
+
+<details><summary>.put</summary>
+
+#### .put(key: any, data: string, callback?: (err: any) => void): Promise\<void\>
+Puts data into the database at the provided key.  Replaces entirely whatever value was there before or creates new value at that key. Returns a promise if no callback is provided.
 
 ```ts
 await db.put(20, "hello")
@@ -113,8 +136,12 @@ await db.put(20, "");
 // "" is now at key 20
 ```
 
-#### .get(key: any):Promise\<string\>
-Used to get the value of a single key.
+</details>
+
+<details><summary>.get</summary>
+
+#### .get(key: any, callback?: (err: any, value: string) => void):Promise\<string\>
+Used to get the value of a single key. Returns a promise if no callback is provided.
 
 ```ts
 await db.put(20, "hello")
@@ -124,16 +151,173 @@ const data = await db.get(20);
 console.log(data) // "hello"
 ```
 
-#### .delete(key: any): Promise\<void\>
-Deletes a key and it's value from the database.
+</details>
+
+<details><summary>.del</summary>
+
+#### .del(key: any, callback?: (err: any) => void): Promise\<void\>
+Deletes a key and it's value from the database. Returns a promise if no callback is provided.
 
 ```ts
 await db.put(20, "hello")
 // "hello" is now at key 20
 
-await db.delete(20);
+await db.del(20);
 // there is no value at key 20, and key 20 no longer exists.
 ```
+
+</details>
+
+<details><summary>.getCount</summary>
+
+#### .getCount(callback?: (err: any, count: number) => void): Promise\<number\>
+Gets the total number of records in the database.  This uses a *very fast* lookup method. Returns a promise if no callback is provided.
+
+```ts
+await db.put(30, "hello 3");
+await db.put(20, "hello 2");
+await db.put(10, "hello 1");
+
+
+const total = await db.getCount();
+console.log(total) // 3
+```
+
+</details>
+
+<details><summary>.empty</summary>
+
+#### .empty(callback?: (err: any) => void): Promise\<void\>
+Clears all keys and values from the database.  All other query types will fail while the database is being emptied, wait for this to complete before attempting to write new data to the database. Returns a promise if no callback is provided.
+
+```ts
+await db.put(30, "hello 3");
+await db.put(20, "hello 2");
+await db.put(10, "hello 1");
+
+await db.empty(); // remove everything
+
+const total = await db.getCount();
+console.log(total) // 0
+```
+
+</details>
+
+<details><summary>.close</summary>
+
+#### .close(callback?: (err: any) => void): Promise\<void\>
+Closes the database, clears the keys from memory and kills the worker threads.  This isn't reversible, you have to create a new `SnapDB` instance to get things going again. Returns a promise if no callback is provided.
+
+```ts
+await db.close();
+// database is closed, can't do anything further with it.
+```
+
+</details>
+
+<details><summary>.flushLog</summary>
+
+#### .flushLog(callback?: (err: any) => void): Promise\<void\>
+Forces the log to be flushed into database files and clears the memtable.  Normally the database waits until the log/memtable is 2MB or larger before flushing them.  Once the log is flushed into disk files a compaction is performed if it's needed. Returns a promise if no callback is provided.
+
+The log files and database files are both written to disk in a safe, robust manner so this method isn't needed for normal activity or to make writes more reliable.  Good reasons to use this method include:
+
+- Manually perform compactions at times that are more convenient than waiting for the system to perform the compactions when the log fills up.  
+- If you have `autoFlush` off you'll need this method to flush the log/memtable periodically.
+
+```ts
+await db.put(30, "hello 3");
+await db.put(20, "hello 2");
+await db.put(10, "hello 1");
+
+await db.flushLog();
+// above 3 "put" commands are now flushed from the log to level files.
+```
+
+</details>
+
+<details><summary>Transactions</summary>
+
+#### .startTx(callback?: (err: any) => void): Promise\<void\>
+Start a database transaction. Returns a promise if no callback is provided.
+
+#### .endTx(callback?: (err: any) => void): Promise\<void\>
+End a database transaction, making sure it's been flushed to the filesystem. Returns a promise if no callback is provided.
+
+```ts
+await db.startTx();
+
+await db.put(30, "hello 3");
+await db.put(20, "hello 2");
+await db.put(10, "hello 1");
+await db.del(10);
+
+await db.endTx();
+// above 4 commands are now atomically updated into the database
+```
+
+</details>
+
+## SnapDB Query API
+
+<details><summary>.query methods</summary>
+
+#### .query(queryArgs, onData: (key: any, data: string) => void, onComplete: (err?: any) => void): void;
+Used to perform generic queries on the database data.  The `queryArgs` is an object with these optional properties:
+- `gt` (greater than), `gte` (greater than or equal) define the lower bound of the range to be streamed. Only entries where the key is greater than (or equal to) this option will be included in the range. When reverse=true the order will be reversed, but the entries streamed will be the same.
+
+- `lt` (less than), `lte` (less than or equal) define the higher bound of the range to be streamed. Only entries where the key is less than (or equal to) this option will be included in the range. When reverse=true the order will be reversed, but the entries streamed will be the same.
+
+- `reverse` (boolean, default: false): stream entries in reverse order.
+
+- `limit` (number, default: -1): limit the number of entries collected by this stream. This number represents a maximum number of entries and may not be reached if you get to the end of the range first. A value of -1 means there is no limit. When reverse=true the entries with the highest keys will be returned instead of the lowest keys.
+
+- `values` (boolean, default: true): whether the results should contain values.  Set to false to only get keys.
+
+- `offset` Cannot be used in combination with `gt`, `gte`, `lt`, or `lte` properties.  Defines an offset from the beginning of the key list to start streaming.  If reverse=true the offset will be from the end of the key list.
+```ts
+await db.put(20, "hello 2");
+await db.put(10, "hello 1");
+
+
+db.query({}, (key, data) => {
+  console.log(key, data);
+}, (err) => {
+  console.log("DONE");
+}, false);
+
+// 10, "hello 1"
+// 20, "hello 2"
+// DONE
+```
+
+#### .queryIt(args: QueryArgs\<K\>): Promise\<AsyncIterableIterator\<[K, string]\>\>
+An iterable version of the query method.  Usage:
+```ts
+const data = await db.queryIt({});
+for await (const [key, value] of data) {
+  console.log(key, data);
+}
+```
+
+#### .queryStream(args: QueryArgs\<K\>): Stream.Readable
+A stream version of the query method.  Usage:
+```ts
+const data = db.queryStream({});
+data.on("data", ([key, data]) => {
+  console.log(key, data);
+})
+data.on("error", () => {
+  // error!
+})
+data.on("finish", () => {
+  // done!
+})
+
+```
+</details>
+
+<details><summary>.getAll methods</summary>
 
 #### .getAll(onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
 Gets all the keys & values in the database in key order, use the callback functions to capture the data. Can optionally return the keys/values in reverse order.
@@ -154,6 +338,35 @@ db.getAll((key, data) => {
 // DONE
 ```
 
+#### .getAllIt(): Promise\<AsyncIterableIterator\<[K, string]\>\>
+An iterable version of the query method.  Usage:
+```ts
+const data = await db.getAllIt();
+for await (const [key, value] of data) {
+  console.log(key, data);
+}
+```
+
+#### .getAllStream(): Stream.Readable
+A stream version of the query method.  Usage:
+```ts
+const data = db.getAllStream();
+data.on("data", ([key, data]) => {
+  console.log(key, data);
+})
+data.on("error", () => {
+  // error!
+})
+data.on("finish", () => {
+  // done!
+})
+
+```
+
+</details>
+
+<details><summary>.getAllKeys methods</summary>
+
 #### .getAllKeys(onKey: (key: any) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
 Gets all the keys in the database, use the callback functions to capture the data.  Can optionally return the keys in reverse order.  This is orders of magnitude faster than the `getAll` method.
 
@@ -173,6 +386,34 @@ db.getAllKeys((key) => {
 // DONE
 ```
 
+#### .getAllKeysIt(lower: any, higher: any, reverse?: boolean): Promise\<AsyncIterableIterator\<[K, string]\>\>
+An iterable version of the query method.  Usage:
+```ts
+const data = await db.getAllKeysIt();
+for await (const key of data) {
+  console.log(key);
+}
+```
+
+#### .getAllKeysStream(lower: any, higher: any, reverse?: boolean): Stream.Readable
+A stream version of the query method.  Usage:
+```ts
+const data = db.getAllKeysStream(10, 20);
+data.on("data", ([key, data]) => {
+  console.log(key, data);
+})
+data.on("error", () => {
+  // error!
+})
+data.on("finish", () => {
+  // done!
+})
+
+```
+</details>
+
+<details><summary>.range methods</summary>
+
 #### .range(lower: any, higher: any, onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean)
 Gets a range of rows between the provided lower and upper values.  Can optionally return the results in reverse.  
 
@@ -190,6 +431,35 @@ db.range(9, 12, (key, data) => {
 // 10, "hello 1"
 // DONE
 ```
+
+#### .rangeIt(lower: any, higher: any, reverse?: boolean): Promise\<AsyncIterableIterator\<[K, string]\>\>
+An iterable version of the query method.  Usage:
+```ts
+const data = await db.rangeIt(10, 20);
+for await (const [key, value] of data) {
+  console.log(key, data);
+}
+```
+
+#### .rangeStream(lower: any, higher: any, reverse?: boolean): Stream.Readable
+A stream version of the query method.  Usage:
+```ts
+const data = db.rangeStream(10, 20);
+data.on("data", ([key, data]) => {
+  console.log(key, data);
+})
+data.on("error", () => {
+  // error!
+})
+data.on("finish", () => {
+  // done!
+})
+
+```
+
+</details>
+
+<details><summary>.offset methods</summary>
 
 #### .offset(offset: number, limit: number, onData: (key: any, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean)
 Gets a section of rows provided the offset and limit you'd like.  Can optionally return the results in reverse order from the bottom of the list.
@@ -211,75 +481,185 @@ db.offset(1, 2, (key, data) => {
 // DONE
 ```
 
-#### .getCount(): Promise\<number\>
-Gets the total number of records in the database.  This uses a *very fast* lookup method.
-
+#### .offsetIt(offset: number, limit: number, reverse?: boolean): Promise\<AsyncIterableIterator\<[K, string]\>\>
+An iterable version of the query method.  Usage:
 ```ts
-await db.put(30, "hello 3");
-await db.put(20, "hello 2");
-await db.put(10, "hello 1");
-
-
-const total = await db.getCount();
-console.log(total) // 3
+const data = await db.offsetIt(0, 10);
+for await (const [key, value] of data) {
+  console.log(key, data);
+}
 ```
 
-#### .empty(): Promise\<void\>
-Clears all keys and values from the database.  All other query types will fail while the database is being emptied, wait for this to complete before attempting to write new data to the database.
-
+#### .offsetStream(offset: number, limit: number, reverse?: boolean): Stream.Readable
+A stream version of the query method.  Usage:
 ```ts
-await db.put(30, "hello 3");
-await db.put(20, "hello 2");
-await db.put(10, "hello 1");
+const data = db.offsetStream(0, 10);
+data.on("data", ([key, data]) => {
+  console.log(key, data);
+})
+data.on("error", () => {
+  // error!
+})
+data.on("finish", () => {
+  // done!
+})
 
-await db.empty(); // remove everything
-
-const total = await db.getCount();
-console.log(total) // 0
 ```
 
-#### .close(): Promise\<void\>
-Closes the database, clears the keys from memory and kills the worker threads.  This isn't reversible, you have to create a new `SnapDB` instance to get things going again.
+</details>
 
-```ts
-await db.close();
-// database is closed, can't do anything further with it.
+## LevelDB Query API
+
+<details><summary>.batch</summary>
+
+#### .batch(ops?: {type: "del"|"put", key: K, value?: string}[], callback?: (error: any) => void): Promise<any> _(array form)_
+
+<code>batch()</code> can be used for very fast bulk-write operations (both _put_ and _delete_). The `array` argument should contain a list of operations to be executed sequentially, although as a whole they are performed as an atomic operation inside the underlying store.
+
+Each operation is contained in an object having the following properties: `type`, `key`, `value`, where the _type_ is either `'put'` or `'del'`. In the case of `'del'` the `value` property is ignored. Any entries with a `key` of `null` or `undefined` will cause an error to be returned on the `callback` and any `type: 'put'` entry with a `value` of `null` or `undefined` will return an error.
+
+```js
+const ops = [
+  { type: 'del', key: 'father' },
+  { type: 'put', key: 'name', value: 'Yuri Irsenovich Kim' },
+  { type: 'put', key: 'dob', value: '16 February 1941' },
+  { type: 'put', key: 'spouse', value: 'Kim Young-sook' },
+  { type: 'put', key: 'occupation', value: 'Clown' }
+]
+
+db.batch(ops, (err) => {
+  if (err) return console.log('Ooops!', err)
+  console.log('Great success dear leader!')
+})
 ```
 
-#### .flushLog(): Promise\<void\>
-Forces the log to be flushed into database files and clears the memtable.  Normally the database waits until the log/memtable is 2MB or larger before flushing them.  Once the log is flushed into disk files a compaction is performed if it's needed.
+If no callback is provided, a promise is returned.
 
-The log files and database files are both written to disk in a safe, robust manner so this method isn't needed for normal activity or to make writes more reliable.  Good reasons to use this method include:
+#### .batch() _(chained form)_
 
-- Manually perform compactions at times that are more convenient than waiting for the system to perform the compactions when the log fills up.  
-- If you have `autoFlush` off you'll need this method to flush the log/memtable periodically.
+<code>batch()</code>, when called with no arguments will return a `Batch` object which can be used to build, and eventually commit, an atomic batch operation. Depending on how it's used, it is possible to obtain greater performance when using the chained form of `batch()` over the array form.
 
-```ts
-await db.put(30, "hello 3");
-await db.put(20, "hello 2");
-await db.put(10, "hello 1");
-
-await db.flushLog();
-// above 3 "put" commands are now flushed from the log to level files.
+```js
+db.batch()
+  .del('father')
+  .put('name', 'Yuri Irsenovich Kim')
+  .put('dob', '16 February 1941')
+  .put('spouse', 'Kim Young-sook')
+  .put('occupation', 'Clown')
+  .write(() => { console.log('Done!') })
 ```
 
-#### .startTx(): Promise\<void\>
-Start a database transaction.
+**batch.put(key, value)**
 
-#### .endTx(): Promise\<void\>
-End a database transaction, making sure it's been flushed to the filesystem.
+Queue a _put_ operation on the current batch, not committed until a `write()` is called on the batch.
 
-```ts
-await db.startTx();
+This method may `throw` a `WriteError` if there is a problem with your put (such as the `value` being `null` or `undefined`).
 
-await db.put(30, "hello 3");
-await db.put(20, "hello 2");
-await db.put(10, "hello 1");
-await db.delete(10);
+**batch.del(key)**
 
-await db.endTx();
-// above 4 commands are now atomically updated into the database
+Queue a _del_ operation on the current batch, not committed until a `write()` is called on the batch.
+
+This method may `throw` a `WriteError` if there is a problem with your delete.
+
+**batch.clear()**
+
+Clear all queued operations on the current batch, any previous operations will be discarded.
+
+**batch.length**
+
+The number of queued operations on the current batch.
+
+**batch.write(callback?: (error: any) => void)**
+
+Commit the queued operations for this batch. All operations not _cleared_ will be written to the underlying store atomically, that is, they will either all succeed or fail with no partial commits.
+
+- `options` is passed on to the underlying store.
+- `options.keyEncoding` and `options.valueEncoding` are not supported here.
+
+If no callback is passed, a promise is returned.
+
+</details>
+<details><summary>.createReadStream, .createKeyStream, .createValueStream</summary>
+
+### .createReadStream(queryArgs)
+
+Returns a [Readable Stream](https://nodejs.org/docs/latest/api/stream.html#stream_readable_streams) of key-value pairs. A pair is an object with `key` and `value` properties. By default it will stream all entries in the underlying store from start to end. Use the options described below to control the range, direction and results.
+
+```js
+db.createReadStream()
+  .on('data', (data) => {
+    console.log(data.key, '=', data.value)
+  })
+  .on('error', (err) => {
+    console.log('Oh my!', err)
+  })
+  .on('close', () => {
+    console.log('Stream closed')
+  })
+  .on('end', () => {
+    console.log('Stream ended')
+  })
 ```
+
+You can supply an options object as the first parameter to `createReadStream()` with the following properties:
+
+- `gt` (greater than), `gte` (greater than or equal) define the lower bound of the range to be streamed. Only entries where the key is greater than (or equal to) this option will be included in the range. When `reverse=true` the order will be reversed, but the entries streamed will be the same.
+
+- `lt` (less than), `lte` (less than or equal) define the higher bound of the range to be streamed. Only entries where the key is less than (or equal to) this option will be included in the range. When `reverse=true` the order will be reversed, but the entries streamed will be the same.
+
+- `reverse` _(boolean, default: `false`)_: stream entries in reverse order. Beware that due to the way that stores like LevelDB work, a reverse seek can be slower than a forward seek.
+
+- `limit` _(number, default: `-1`)_: limit the number of entries collected by this stream. This number represents a _maximum_ number of entries and may not be reached if you get to the end of the range first. A value of `-1` means there is no limit. When `reverse=true` the entries with the highest keys will be returned instead of the lowest keys.
+
+- `keys` _(boolean, default: `true`)_: whether the results should contain keys. If set to `true` and `values` set to `false` then results will simply be keys, rather than objects with a `key` property. Used internally by the `createKeyStream()` method.
+
+- `values` _(boolean, default: `true`)_: whether the results should contain values. If set to `true` and `keys` set to `false` then results will simply be values, rather than objects with a `value` property. Used internally by the `createValueStream()` method.
+
+- `offset` _(number)_: Cannot be used in combination with `gt`, `gte`, `lt`, or `lte` properties.  Defines an offset from the beginning of the key list to start streaming.  If reverse=true the offset will be from the end of the key list.
+
+
+### db.createKeyStream(queryArgs)
+
+Returns a [Readable Stream](https://nodejs.org/docs/latest/api/stream.html#stream_readable_streams) of keys rather than key-value pairs. Use the same options as described for <a href="#createReadStream"><code>createReadStream</code></a> to control the range and direction.
+
+You can also obtain this stream by passing an options object to `createReadStream()` with `keys` set to `true` and `values` set to `false`. The result is equivalent; both streams operate in [object mode](https://nodejs.org/docs/latest/api/stream.html#stream_object_mode).
+
+```js
+db.createKeyStream()
+  .on('data', (data) => {
+    console.log('key=', data)
+  })
+
+// same as:
+db.createReadStream({ keys: true, values: false })
+  .on('data', (data) => {
+    console.log('key=', data)
+  })
+```
+
+<a name="createValueStream"></a>
+
+### db.createValueStream(queryArgs)
+
+Returns a [Readable Stream](https://nodejs.org/docs/latest/api/stream.html#stream_readable_streams) of values rather than key-value pairs. Use the same options as described for <a href="#createReadStream"><code>createReadStream</code></a> to control the range and direction.
+
+You can also obtain this stream by passing an options object to `createReadStream()` with `values` set to `true` and `keys` set to `false`. The result is equivalent; both streams operate in [object mode](https://nodejs.org/docs/latest/api/stream.html#stream_object_mode).
+
+```js
+db.createValueStream()
+  .on('data', (data) => {
+    console.log('value=', data)
+  })
+
+// same as:
+db.createReadStream({ keys: false, values: true })
+  .on('data', (data) => {
+    console.log('value=', data)
+  })
+```
+</details>
+
+## Event API
 
 #### .on(event: string, callback: (eventData) => void): void
 Subscribe to a specific event.

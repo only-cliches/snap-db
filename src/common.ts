@@ -24,6 +24,7 @@ export interface QueryArgs<K> {
     lte?: K;
     offset?: number;
     limit?: number;
+    keys?: boolean;
     values?: boolean;
     reverse?: boolean;
 }

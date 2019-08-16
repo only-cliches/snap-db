@@ -882,7 +882,7 @@ export class SnapDB<K> {
 
         if (this._isClosed) {
             if (callback) callback();
-            return Promise.reject();
+            return Promise.resolve();
         }
 
         this._isClosed = true;

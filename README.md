@@ -158,7 +158,7 @@ console.log(data) // "hello"
 
 <details><summary>.exists</summary>
 
-#### .exists(key: any, callback?: (err: any, value: string) => void):Promise\<string\>
+#### .exists(key: any, callback?: (err: any, result?: boolean) => void):Promise\<boolean\>
 Checks to see if a single key exists.  This query happens purely in memory and doesn't touch the disk, has excellent performance. Returns a promise if no callback is provided.
 
 ```ts

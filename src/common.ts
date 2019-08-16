@@ -6,7 +6,7 @@ import { Sha1 } from "./sha1";
 
 export const VERSION = 1.12;
 
-export const NULLBYTE = new Buffer([0]);
+export const NULLBYTE = Buffer.from ? Buffer.from([0]) : new Buffer([0]);
 
 export interface SnapManifest {
     v: number;

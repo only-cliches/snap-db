@@ -84,7 +84,7 @@ export class SnapDatabase {
                     // if the JSON is invalid this whole block fails to run
                     // either manifest.json is valid OR manifest-temp.json is valid
                     // so if this fails the main mainfest should be good to use.
-                    this._manifestData = JSON.parse((fs.readFileSync(path.join(this._path, "manifest-temp.json")) || new Buffer([])).toString("utf-8") || '{"inc": 0, "lvl": []}');
+                    this._manifestData = JSON.parse((fs.readFileSync(path.join(this._path, "manifest-temp.json")) || Buffer.from ? Buffer.from([]) : new Buffer([])).toString("utf-8") || '{"inc": 0, "lvl": []}');
 
                     // write to main manifest
                     fs.writeFileSync(path.join(this._path, "manifest.json"), JSON.stringify(this._manifestData));
@@ -255,7 +255,7 @@ export class SnapDatabase {
             if (memValue === NULLBYTE) { // tombstone
                 return undefined;
             }
-            let buff = new Buffer(memValue.offset[1]);
+            let buff = Buffer.from ? Buffer.from(memValue.offset[1]) : new Buffer(memValue.offset[1]);
             fs.readSync(this._logHandle, buff, 0, memValue.offset[1], memValue.offset[0]);
             return buff.toString("utf-8");
         }
@@ -314,7 +314,7 @@ export class SnapDatabase {
                     return undefined;
                 }
                 const fd = fs.openSync(path.join(this._path, fileName(fileID) + ".dta"), "r");
-                let buff = new Buffer(dataLength);
+                let buff = Buffer.alloc ? Buffer.alloc(dataLength) : new Buffer(dataLength);
                 fs.readSync(fd, buff, 0, dataLength, dataStart);
                 fs.closeSync(fd);
                 return buff.toString("utf-8");
@@ -420,7 +420,7 @@ export class SnapDatabase {
 
     public compactDone() {
         this._isCompacting = false;
-        this._manifestData = JSON.parse((fs.readFileSync(path.join(this._path, "manifest.json")) || new Buffer([])).toString("utf-8"));
+        this._manifestData = JSON.parse((fs.readFileSync(path.join(this._path, "manifest.json")) || Buffer.from ? Buffer.from([]) : new Buffer([])).toString("utf-8"));
         this._bloomCache = {};
         this._indexFileCache = {};
     }

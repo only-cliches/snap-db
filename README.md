@@ -10,6 +10,9 @@ Get a running database in a snap!
   <a href="https://www.npmjs.com/package/snap-db">
     <img src="https://img.shields.io/npm/dm/snap-db.svg">
   </a>
+  <a href="https://travis-ci.com/ClickSimply/snap-db">
+    <img src="https://travis-ci.com/ClickSimply/snap-db.svg?branch=master">
+  </a>
 </p>
 
 SnapDB is a pure javascript persistent key-value store that provides ordered mapping from keys to string values. Data is persisted to disk using a Log Structure Merge Tree (LSM Tree) inspired by LevelDB / RocksDB.

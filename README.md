@@ -129,7 +129,7 @@ Returns `true` if the database isn't ready, `false` otherwise.
 #### .put(key: any, data: string, callback?: (err: any) => void): Promise\<void\>
 Puts data into the database at the provided key.  Replaces entirely whatever value was there before or creates new value at that key. Returns a promise if no callback is provided.
 
-Keys must be a string or number, everything else will be stringified.
+If key type is "any", keys must be a string or number.  Everything else will be stringified.
 
 ```ts
 await db.put(20, "hello")

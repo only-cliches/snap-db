@@ -4,7 +4,7 @@ import { IbloomFilterObj, BloomFilter, MurmurHash3 } from "./bloom";
 import { RedBlackTree } from "./rbtree";
 import { Sha1 } from "./sha1";
 
-export const VERSION = 1.14;
+export const VERSION = 1.15;
 
 export const NULLBYTE = Buffer.from([0]);
 

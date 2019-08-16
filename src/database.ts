@@ -228,7 +228,7 @@ export class SnapDatabase {
             this._cache[key] = value;
         }
 
-        const keyStr = String(key);
+        const keyStr = (this.keyType === "any" ? (typeof key === "number" ? "n:" : "s:") : "") + String(key);
         const valueStr = String(value);
 
         // mark key in memtable
@@ -780,7 +780,7 @@ export class SnapDatabase {
                     }
                     ptr += keyLength + 1;
 
-                    let parsedKey = this.keyType === "string" ? key : parseFloat(key);
+                    let parsedKey = this.keyType === "any" ? (key.slice(0, 2) === "n:" ? parseFloat(key.slice(2)) : key.slice(2)) : (this.keyType === "string" ? key : parseFloat(key));
                     let parsedValueData = keyData.substr(ptr).split(",").map(s => parseInt(s));
 
                     this._memTable = this._memTable.remove(parsedKey);
@@ -1029,7 +1029,7 @@ export class SnapDatabase {
                             const keys = Object.keys(index.keys);
                             let i = keys.length;
                             while (i--) {
-                                const key = this.keyType === "string" ? keys[i] : parseFloat(keys[i]);
+                                const key = this.keyType === "any" ? (keys[i].slice(0, 2) === "n:" ? parseFloat(keys[i].slice(2)) : keys[i].slice(2)) : (this.keyType === "string" ? keys[i] : parseFloat(keys[i]));
                                 if (index.keys[keys[i]][0] === -1) { // delete
                                     this._index = this._index.remove(key);
                                 } else { // add

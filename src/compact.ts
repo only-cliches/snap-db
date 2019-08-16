@@ -78,7 +78,7 @@ export class SnapCompactor {
             const keys = Object.keys(index.keys);
             let i = 0;
             while(i < keys.length) {
-                const key = this.keyType === "string" ? keys[i] : parseFloat(keys[i]);
+                const key = this.keyType === "any" ? (keys[i].slice(0, 2) === "n:" ? parseFloat(keys[i].slice(2)) : keys[i].slice(2)) : (this.keyType === "string" ? keys[i] : parseFloat(keys[i]));
 
                 if (compactIndex.get(key) !== undefined) {
                     compactIndex = compactIndex.remove(key);

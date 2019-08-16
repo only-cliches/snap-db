@@ -1,6 +1,7 @@
 # [1.1.3]
 - Resolved issue [#8](https://github.com/ClickSimply/snap-db/issues/8), `ready` is called right away if the database is already ready.
 - Resolved issue [#10](https://github.com/ClickSimply/snap-db/issues/10), `close` does not do a promise reject on subsequent calls.
+- Merged PR [#11](https://github.com/ClickSimply/snap-db/pull/11), added travis CI support to project.
 
 # [1.1.2] 08-14-2019
 - Resolved issue [#2](https://github.com/ClickSimply/snap-db/issues/2), `.ready` no longer needs to be called to start using the database.

@@ -4,14 +4,19 @@ import { SnapManifest, writeManifestUpdate, fileName, VERSION, throttle, SnapInd
 import { BloomFilter, MurmurHash3, IbloomFilterObj } from "./bloom";
 import { createRBTree, RedBlackTree, RedBlackTreeIterator } from "./rbtree";
 
+const snapCompare = (a, b) => {
+    if (a === b) return 0;
+    if (typeof a === typeof b) return a > b ? 1 : -1;
+    return typeof a > typeof b ? 1 : -1;
+};
+
 export class SnapDatabase {
 
     private _cache: {
         [key: string]: string;
     } = {};
 
-
-    private _memTable: RedBlackTree = createRBTree();
+    private _memTable: RedBlackTree = createRBTree(snapCompare);
 
     private _memTableSize: number = 0;
 
@@ -39,7 +44,7 @@ export class SnapDatabase {
         [fileNum: number]: { cache: SnapIndex, lastUsed: number }
     } = {};
 
-    private _index: RedBlackTree = createRBTree();
+    private _index: RedBlackTree = createRBTree(snapCompare);
 
     private _indexCacheClear = throttle(this, () => {
         Object.keys(this._indexFileCache).forEach((fileNum) => {
@@ -383,7 +388,7 @@ export class SnapDatabase {
                 writeManifestUpdate(this._path, this._manifestData);
 
                 // empty memtable
-                this._memTable = createRBTree();
+                this._memTable = createRBTree(snapCompare);
                 this._memTableSize = 0;
 
                 // empty logfile
@@ -460,8 +465,8 @@ export class SnapDatabase {
 
     public close() {
         // clear index
-        this._index = createRBTree();
-        this._memTable = createRBTree();
+        this._index = createRBTree(snapCompare);
+        this._memTable = createRBTree(snapCompare);
 
         // close log file
         fs.closeSync(this._logHandle);
@@ -473,8 +478,8 @@ export class SnapDatabase {
     public clear() {
         this._isCompacting = true;
 
-        this._index = createRBTree();
-        this._memTable = createRBTree();
+        this._index = createRBTree(snapCompare);
+        this._memTable = createRBTree(snapCompare);
         this._memTableSize = 0;
 
         fs.closeSync(this._logHandle);

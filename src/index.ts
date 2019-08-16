@@ -45,10 +45,10 @@ export class SnapDB<K> {
      * Holds the current key type.
      * READ ONLY
      *
-     * @type {("string" | "float" | "int")}
+     * @type {("string" | "float" | "int" | "any")}
      * @memberof SnapDB
      */
-    public keyType: "string" | "float" | "int";
+    public keyType: "string" | "float" | "int" | "any";
 
     /**
      * `true` if the in memory cache is enabled, `false` otherwise.
@@ -82,7 +82,7 @@ export class SnapDB<K> {
      *Creates an instance of SnapDB.
      * @param {({
      *         dir: string,
-     *         key: "string" | "float" | "int",
+     *         key: "string" | "float" | "int" | "any",
      *         cache?: boolean,
      *         autoFlush?: number|boolean,
      *         singleThread?: boolean
@@ -91,25 +91,23 @@ export class SnapDB<K> {
      */
     constructor(args: {
         dir: string,
-        key: "string" | "float" | "int",
+        key?: "string" | "float" | "int" | "any",
         cache?: boolean,
         autoFlush?: number | boolean,
         mainThread?: boolean
-    } | string, keyType?: "string" | "float" | "int", cache?: boolean) {
+    } | string, keyType?: "string" | "float" | "int" | "any", cache?: boolean) {
 
         this._autoFlush = true;
         this._onCompactorMessage = this._onCompactorMessage.bind(this);
 
         if (typeof args === "string") {
             this._path = args;
-            this.keyType = keyType || "string";
+            this.keyType = keyType || "any";
             this.memoryCache = cache || false;
             this._worker = fork(path.join(__dirname, "database.js"));
-            console.warn("This initialization for SnapDB is depreciated, please read documentation for new arguments!");
-
         } else {
             this._path = path.resolve(args.dir);
-            this.keyType = args.key;
+            this.keyType = args.key || "any";
             this.memoryCache = args.cache || false;
             this._autoFlush = typeof args.autoFlush === "undefined" ? true : args.autoFlush;
 
@@ -312,6 +310,9 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public get(key: K, callback?:(err: any, value?: string) => void ): Promise<string | undefined> {
+
+        const getKey = this.keyType === "any" ? this._anyKey(key) : key;
+
         return this._doWhenReady((res, rej) => {
             if (this._worker) {
 
@@ -324,11 +325,11 @@ export class SnapDB<K> {
                     if (callback) callback(data[0], data[1] === null ? undefined : data[1]);
                 })
 
-                this._worker.send({ type: "snap-get", key: key, id: msgId });
+                this._worker.send({ type: "snap-get", key: getKey, id: msgId });
             } else {
 
                 try {
-                    const data = this._database.get(key);
+                    const data = this._database.get(getKey);
                     res(data === null ? undefined : data);
                     if (callback) callback(undefined, data === null ? undefined : data);
                     if (this._hasEvents) this._rse.trigger("get", { target: this, tx: rand(), time: Date.now(), data: data });
@@ -349,6 +350,11 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public delete(key: K, callback?: (err: any, key?: K) => void): Promise<any> {
+        if (key === null || key === undefined) {
+            if (callback) callback("Write Error: Key can't be null or undefined!");
+            return Promise.reject("Write Error: Key can't be null or undefined!");
+        }
+        const getKey = this.keyType === "any" ? this._anyKey(key) : key;
         return this._doWhenReady((res, rej) => {
             if (this._worker) {
                 const msgId = this._msgID((data) => {
@@ -360,12 +366,12 @@ export class SnapDB<K> {
                     if (callback) callback(data[0], data[1]);
                 })
 
-                this._worker.send({ type: "snap-del", key: key, id: msgId });
+                this._worker.send({ type: "snap-del", key: getKey, id: msgId });
             } else {
                 const msgId = rand();
                 try {
-                    res(this._database.delete(key));
-                    if (callback) callback(undefined, key);
+                    res(this._database.delete(getKey));
+                    if (callback) callback(undefined, getKey);
                     if (this._hasEvents) this._rse.trigger("delete", { target: this, tx: msgId, time: Date.now(), data: true });
                 } catch (e) {
                     rej(e);
@@ -385,10 +391,6 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public del(key: K, callback?: (err: any) => void): Promise<any> {
-        if (key === null || key === undefined) {
-            if (callback) callback("Write Error: Key can't be null or undefined!");
-            return Promise.reject("Write Error: Key can't be null or undefined!");
-        }
         return this.delete(key, callback);
     }
 
@@ -429,11 +431,11 @@ export class SnapDB<K> {
                     if (callback) callback(data[0], data[1]);
                 })
 
-                this._worker.send({ type: "snap-put", key: parseKey[this.keyType](key), value: data, id: msgId });
+                this._worker.send({ type: "snap-put", key: this.keyType === "any" ? this._anyKey(key) : parseKey[this.keyType](key), value: data, id: msgId });
             } else {
                 const msgId = rand();
                 try {
-                    const put = this._database.put(parseKey[this.keyType](key), data);
+                    const put = this._database.put(this.keyType === "any" ? this._anyKey(key) : parseKey[this.keyType](key), data);
                     res(put);
                     if (callback) callback(undefined, put);
                     if (this._hasEvents) this._rse.trigger("put", { target: this, tx: msgId, time: Date.now(), data: put });
@@ -789,6 +791,7 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public exists(key: K, callback?: (err: any, exists?: boolean) => void): Promise<boolean> {
+        const getKey = this.keyType === "any" ? this._anyKey(key) : key;
         return this._doWhenReady((res, rej) => {
             if (this._worker) {
 
@@ -801,11 +804,11 @@ export class SnapDB<K> {
                     if (callback) callback(data[0], data[1]);
                 })
 
-                this._worker.send({ type: "snap-exists", key: key, id: msgId });
+                this._worker.send({ type: "snap-exists", key: getKey, id: msgId });
             } else {
 
                 try {
-                    const data = this._database.exists(key);
+                    const data = this._database.exists(getKey);
                     res(data);
                     if (callback) callback(undefined, data);
                     if (this._hasEvents) this._rse.trigger("exists", { target: this, tx: rand(), time: Date.now(), data: data });
@@ -1066,6 +1069,20 @@ export class SnapDB<K> {
 
         messageBuffer[msgId] = cb;
         return msgId;
+    }
+
+    /**
+     * Make "any" type keys are numbers or strings
+     *
+     * @private
+     * @param {*} key
+     * @returns {*}
+     * @memberof SnapDB
+     */
+    private _anyKey(key: any): any {
+        const type = typeof key;
+        if (type === "string" || type === "number") return key;
+        return key !== undefined && key.toString && typeof key.toString === "function" ? key.toString() : String(key);
     }
 
     /**

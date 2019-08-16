@@ -12,8 +12,8 @@ function makeid() {
     return text;
 }
 
-export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<any>, db_flt: SnapDB<any>) => {
-    
+export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<any>, db_flt: SnapDB<any>, db_any: SnapDB<any>) => {
+
     let data: {
         [key: string]: [any, any][];
     } = {};
@@ -21,9 +21,9 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
     describe(testName, () => {
         it("Put Data", (done: MochaDone) => {
             const size = 1000;
-            Promise.all([db_str, db_int, db_flt].map((s, i) => {
+            Promise.all([db_str, db_int, db_flt, db_any].map((s, i) => {
 
-                const dataKey = ["str", "int", "flt"][i];
+                const dataKey = ["str", "int", "flt", "any"][i];
                 data[dataKey] = [];
                 for (let k = 0; k < size; k++) {
                     switch (i) {
@@ -35,6 +35,20 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
                             break;
                         case 2:
                             data[dataKey].push([k + (Math.round(Math.random() * 8) / 10), makeid()]);
+                            break;
+                        case 3:
+                            const dice = Math.floor(Math.random() * 3);
+                            switch(dice) {
+                                case 0:
+                                    data[dataKey].push([k, makeid()]);
+                                break;
+                                case 1:
+                                    data[dataKey].push([k + (Math.round(Math.random() * 8) / 10), makeid()]);
+                                break;
+                                case 2:
+                                    data[dataKey].push([makeid(), makeid()]);
+                                break;
+                            }
                             break;
                     }
                 }
@@ -78,12 +92,12 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
         it("Call close() for multiple times", (done: MochaDone) => {
             const db = new SnapDB<string>({ dir: "testDB-close", key: "string" })
             db.close()
-            .then(() => db.close())
-            .then(() => done())
-            .catch(done);
+                .then(() => db.close())
+                .then(() => done())
+                .catch(done);
         });
 
- 
+
         it("Integer: Sorted Keys", (done: MochaDone) => {
             data["int"] = data["int"].sort((a, b) => a[0] > b[0] ? 1 : -1);
             let dataFromDB: any[] = [];
@@ -324,11 +338,7 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
 
 
 
-
-
-
         it("String: Sorted Keys", (done: MochaDone) => {
-
             data["str"] = data["str"].sort((a, b) => a[0] > b[0] ? 1 : -1);
             let dataFromDB: any[] = [];
             db_str.getAll((key, value) => {
@@ -442,6 +452,132 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
                 }
 
                 db_str.close();
+
+            }, true);
+        });
+
+
+
+
+        it("Any: Sorted Keys", (done: MochaDone) => {
+            data["any"] = data["any"].sort((a, b) => {
+                if (a[0] === b[0]) return 0;
+                if (typeof a[0] === typeof b[0]) return a[0] > b[0] ? 1 : -1;
+                return typeof a[0] > typeof b[0] ? 1 : -1;
+            });
+            let dataFromDB: any[] = [];
+            db_any.getAll((key, value) => {
+                dataFromDB.push([key, value]);
+            }, () => {
+                try {
+                    expect(dataFromDB).to.deep.equal(data["any"], "Any not sorted!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            });
+        });
+
+
+        it("Any: Key Exists", (done: MochaDone) => {
+            const randomKey = data["any"][Math.floor(Math.random() * data["any"].length)][0];
+            db_any.exists(randomKey).then((exists) => {
+                try {
+                    expect(exists).to.equal(true, "Any key doesn't exist!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            }).catch(done);
+        });
+
+        it("Any: Key Doesn't Exist", (done: MochaDone) => {
+            const impossibleKey = "There is no way this combination of letters and spaces will happen.";
+            db_any.exists(impossibleKey).then((exists) => {
+                try {
+                    expect(exists).to.equal(false, "Any key exists!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            }).catch(done);
+        });
+
+        it("Any: Delete Key", (done: MochaDone) => {
+            const thisValue = data["any"].splice(42, 1).pop() as [any, any];
+
+            db_any.delete(thisValue[0])
+            let dataFromDB: any[] = [];
+            db_any.getAll((key, value) => {
+                dataFromDB.push([key, value]);
+            }, () => {
+                try {
+                    expect(dataFromDB).to.deep.equal(data["any"], "Any key not deleted!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            });
+
+        });
+
+        it("Any: Offset Select", (done: MochaDone) => {
+            let dataFromDB: any[] = [];
+            db_any.offset(100, 10, (key, value) => {
+                dataFromDB.push([key, value]);
+            }, () => {
+                try {
+                    expect(dataFromDB).to.deep.equal(data["any"].slice(100, 110), "Any offset select failed!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            });
+        });
+
+        it("Any: Offset Select (Reverse)", (done: MochaDone) => {
+            let dataFromDB: any[] = [];
+            db_any.offset(100, 10, (key, value) => {
+                dataFromDB.push([key, value]);
+            }, () => {
+                try {
+                    const len = db_any.getCount();
+                    expect(dataFromDB).to.deep.equal(data["any"].slice().reverse().slice(100, 110), "Any offset reverse select failed!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            }, true);
+        });
+
+        it("Any: Range Select", (done: MochaDone) => {
+            let dataFromDB: any[] = [];
+            db_any.range("a", "b", (key, value) => {
+                dataFromDB.push([key, value]);
+            }, () => {
+                try {
+                    expect(dataFromDB).to.deep.equal(data["any"].filter((v) => v[0] > "a" && v[0] < "b"), "Any range select failed!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            });
+        });
+
+        it("Any: Range Select (Reverse)", (done: MochaDone) => {
+            let dataFromDB: any[] = [];
+            db_any.range("a", "b", (key, value) => {
+                dataFromDB.push([key, value]);
+            }, () => {
+                try {
+                    const genData = data["any"].slice().filter((v) => v[0] > "a" && v[0] < "b").reverse();
+                    expect(dataFromDB).to.deep.equal(genData, "Any range select reverse failed!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+
+                db_any.close();
 
             }, true);
         });

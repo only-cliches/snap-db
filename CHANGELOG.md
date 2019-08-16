@@ -1,6 +1,7 @@
-# [1.1.4]
+# [1.1.4] 08-16-2019
 - Readme tweaks.
 - Added `exists` method.
+- Added `any` key type support.
 
 # [1.1.3] 08-16-2019
 - Resolved issue [#8](https://github.com/ClickSimply/snap-db/issues/8), `ready` is called right away if the database is already ready.

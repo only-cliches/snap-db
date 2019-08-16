@@ -348,7 +348,7 @@ export class SnapDB<K> {
      * @returns {Promise<any>}
      * @memberof SnapDB
      */
-    public delete(key: K, callback?: (err: any) => void): Promise<any> {
+    public delete(key: K, callback?: (err: any, key?: K) => void): Promise<any> {
         return this._doWhenReady((res, rej) => {
             if (this._worker) {
                 const msgId = this._msgID((data) => {
@@ -357,15 +357,15 @@ export class SnapDB<K> {
                     } else {
                         res(data[1]);
                     }
+                    if (callback) callback(data[0], data[1]);
                 })
 
                 this._worker.send({ type: "snap-del", key: key, id: msgId });
-                if (callback) callback(undefined);
             } else {
                 const msgId = rand();
                 try {
                     res(this._database.delete(key));
-                    if (callback) callback(undefined);
+                    if (callback) callback(undefined, key);
                     if (this._hasEvents) this._rse.trigger("delete", { target: this, tx: msgId, time: Date.now(), data: true });
                 } catch (e) {
                     rej(e);

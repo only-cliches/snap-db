@@ -41,7 +41,7 @@ export class SnapCompactor {
     }
 
     private _runCompaction() {
-        this._manifestData = JSON.parse((fs.readFileSync(path.join(this.path, "manifest.json")) || Buffer.from ? Buffer.from([]) : new Buffer([])).toString("utf-8") || '{"inc": 0, "lvl": []}');
+        this._manifestData = JSON.parse((fs.readFileSync(path.join(this.path, "manifest.json")) || Buffer.from([])).toString("utf-8") || '{"inc": 0, "lvl": []}');
 
         let compactIndex = createRBTree();
 

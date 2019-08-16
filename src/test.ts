@@ -20,7 +20,7 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
 
     describe(testName, () => {
         it("Put Data", (done: MochaDone) => {
-            const size = 100;
+            const size = 1000;
             Promise.all([db_str, db_int, db_flt].map((s, i) => {
 
                 const dataKey = ["str", "int", "flt"][i];
@@ -37,7 +37,7 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
                             data[dataKey].push([k + (Math.round(Math.random() * 8) / 10), makeid()]);
                             break;
                     }
-                } ``
+                }
                 // scramble for insert
                 data[dataKey] = data[dataKey].sort((a, b) => Math.random() > 0.5 ? 1 : -1);
                 return Promise.all(data[dataKey].map(k => s.put(k[0], k[1])))

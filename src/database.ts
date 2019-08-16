@@ -84,7 +84,7 @@ export class SnapDatabase {
                     // if the JSON is invalid this whole block fails to run
                     // either manifest.json is valid OR manifest-temp.json is valid
                     // so if this fails the main mainfest should be good to use.
-                    this._manifestData = JSON.parse((fs.readFileSync(path.join(this._path, "manifest-temp.json")) || Buffer.from ? Buffer.from([]) : new Buffer([])).toString("utf-8") || '{"inc": 0, "lvl": []}');
+                    this._manifestData = JSON.parse((fs.readFileSync(path.join(this._path, "manifest-temp.json")) || Buffer.from([])).toString("utf-8") || '{"inc": 0, "lvl": []}');
 
                     // write to main manifest
                     fs.writeFileSync(path.join(this._path, "manifest.json"), JSON.stringify(this._manifestData));
@@ -183,6 +183,7 @@ export class SnapDatabase {
         delete this._cache[key];
 
         if (!this._doingTx) this.flushLog();
+        return key;
     }
 
     public put(key: any, value: string) {
@@ -237,7 +238,7 @@ export class SnapDatabase {
         return this._bloomCache[fileID];
     }
 
-    public get(key: any, skipCache?: boolean): string|undefined {
+    public get(key: any, skipCache?: boolean): string | undefined {
         this._indexCacheClear();
 
         // check cache first
@@ -255,7 +256,7 @@ export class SnapDatabase {
             if (memValue === NULLBYTE) { // tombstone
                 return undefined;
             }
-            let buff = Buffer.from ? Buffer.from(memValue.offset[1]) : new Buffer(memValue.offset[1]);
+            let buff = Buffer.alloc(memValue.offset[1]);
             fs.readSync(this._logHandle, buff, 0, memValue.offset[1], memValue.offset[0]);
             return buff.toString("utf-8");
         }
@@ -314,7 +315,7 @@ export class SnapDatabase {
                     return undefined;
                 }
                 const fd = fs.openSync(path.join(this._path, fileName(fileID) + ".dta"), "r");
-                let buff = Buffer.alloc ? Buffer.alloc(dataLength) : new Buffer(dataLength);
+                let buff = Buffer.alloc(dataLength);
                 fs.readSync(fd, buff, 0, dataLength, dataStart);
                 fs.closeSync(fd);
                 return buff.toString("utf-8");
@@ -420,7 +421,7 @@ export class SnapDatabase {
 
     public compactDone() {
         this._isCompacting = false;
-        this._manifestData = JSON.parse((fs.readFileSync(path.join(this._path, "manifest.json")) || Buffer.from ? Buffer.from([]) : new Buffer([])).toString("utf-8"));
+        this._manifestData = JSON.parse((fs.readFileSync(path.join(this._path, "manifest.json")) || Buffer.from([])).toString("utf-8"));
         this._bloomCache = {};
         this._indexFileCache = {};
     }
@@ -468,17 +469,17 @@ export class SnapDatabase {
     }
 
     public iterators: {
-        [key: string]: {it: RedBlackTreeIterator, r: boolean, limit: number, count:  number, end?: any, endE?: any};
+        [key: string]: { it: RedBlackTreeIterator, r: boolean, limit: number, count: number, end?: any, endE?: any };
     } = {};
 
     public newIterator(queryArgs: QueryArgs<any>): string {
         let id = rand();
-        while(this.iterators[id]) {
+        while (this.iterators[id]) {
             id = rand();
         }
 
         if (queryArgs.offset !== undefined) {
-            this.iterators[id] = {it: queryArgs.reverse ? this._index.end() : this._index.begin(), r: queryArgs.reverse || false, limit: queryArgs.limit || -1, count: 0};
+            this.iterators[id] = { it: queryArgs.reverse ? this._index.end() : this._index.begin(), r: queryArgs.reverse || false, limit: queryArgs.limit || -1, count: 0 };
             let i = queryArgs.offset;
             while (i-- && this.iterators[id].it.valid()) {
                 if (queryArgs.reverse) {
@@ -490,13 +491,13 @@ export class SnapDatabase {
         } else {
             if (queryArgs.reverse) {
                 const end = queryArgs.lt !== undefined ? this._index.lt(queryArgs.lt) : (queryArgs.lte !== undefined ? this._index.le(queryArgs.lte) : this._index.end());
-                this.iterators[id] = {it: end, r: true, limit: queryArgs.limit || -1, end: queryArgs.gt, endE: queryArgs.gte, count: 0};
+                this.iterators[id] = { it: end, r: true, limit: queryArgs.limit || -1, end: queryArgs.gt, endE: queryArgs.gte, count: 0 };
             } else {
                 const start = queryArgs.gt !== undefined ? this._index.gt(queryArgs.gt) : (queryArgs.gte !== undefined ? this._index.ge(queryArgs.gte) : this._index.begin());
-                this.iterators[id] = {it: start, r: false, limit: queryArgs.limit || -1, end: queryArgs.lt, endE: queryArgs.lte, count: 0};
+                this.iterators[id] = { it: start, r: false, limit: queryArgs.limit || -1, end: queryArgs.lt, endE: queryArgs.lte, count: 0 };
             }
         }
-   
+
         return id;
     }
 
@@ -504,7 +505,7 @@ export class SnapDatabase {
         delete this.iterators[id];
     }
 
-    public nextIterator(id: string): {key: any, done: boolean} {
+    public nextIterator(id: string): { key: any, done: boolean } {
 
         if (this.iterators[id].it.valid()) {
             const key = this.iterators[id].it.key();
@@ -513,7 +514,7 @@ export class SnapDatabase {
             const limitFinished = this.iterators[id].limit === -1 ? false : this.iterators[id].count >= this.iterators[id].limit;
             const rangeFinished1 = this.iterators[id].end !== undefined ? (reverse ? key < this.iterators[id].end : key > this.iterators[id].end) : false;
             const rangeFinished2 = this.iterators[id].endE !== undefined ? (reverse ? key <= this.iterators[id].endE : key >= this.iterators[id].endE) : false;
-    
+
             if (!limitFinished && !rangeFinished1 && !rangeFinished2) {
                 this.iterators[id].count++;
                 if (this.iterators[id].r) {
@@ -521,12 +522,12 @@ export class SnapDatabase {
                 } else {
                     this.iterators[id].it.next();
                 }
-                return {key: key, done: false};
+                return { key: key, done: false };
             } else {
-                return {key: undefined, done: true};
+                return { key: undefined, done: true };
             }
         } else {
-            return {key: undefined, done: true};
+            return { key: undefined, done: true };
         }
 
     }
@@ -580,8 +581,7 @@ export class SnapDatabase {
                     break;
                 case "snap-del":
                     try {
-                        this.delete(key);
-                        if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "delete", data: [undefined, true] })
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "delete", data: [undefined, this.delete(key)] })
                     } catch (e) {
                         console.error(e);
                         if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "delete", data: ["Unable to delete key! " + key] })

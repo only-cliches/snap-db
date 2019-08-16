@@ -275,6 +275,8 @@ Used to perform generic queries on the database data.  The `queryArgs` is an obj
 
 - `limit` (number, default: -1): limit the number of entries collected by this stream. This number represents a maximum number of entries and may not be reached if you get to the end of the range first. A value of -1 means there is no limit. When reverse=true the entries with the highest keys will be returned instead of the lowest keys.
 
+- `keys` (boolean, default: true): whether the results should contain keys.  Set to false to only get values.
+
 - `values` (boolean, default: true): whether the results should contain values.  Set to false to only get keys.
 
 - `offset` Cannot be used in combination with `gt`, `gte`, `lt`, or `lte` properties.  Defines an offset from the beginning of the key list to start streaming.  If reverse=true the offset will be from the end of the key list.
@@ -769,7 +771,7 @@ Reads are performed in this order:
 2. If the value/tombstone is in the memtable that's returned.
 3. The manifest file is checked to discover which Level files contain a key range that include the requested key.  The files are then sorted from newest to oldest.  Each file's bloom filter is checked against the requested key.  If a bloom filter returns a positive result, we attempt to load data from that Level file.  If the data/tombstone isn't in the Level file we move to progressively older Level files until a result is found.  Finally, if the key isn't found in any files we return an error that the key isn't in the database.
 
-One of the main ways SnapDB is different from LevelDB/RocksDB is the database keys are stored in a red-black tree to make key traversal faster.  This allows fast `.offset` and `.getCount` methods in the API that aren't typically available for LevelDB/RocksDB stores.  The tradeoff is that all keys must fit in javascript memory.
+One of the main ways SnapDB is different from LevelDB/RocksDB is the database keys are stored in a red-black tree to make key traversal faster.  This allows fast `.offset` and `.getCount` methods in the API that aren't typically available for LevelDB/RocksDB and key only queries are orders of magnitude faster than LevelDB/RocksDB.  The tradeoff is that all keys must fit in javascript memory.
 
 # MIT License
 

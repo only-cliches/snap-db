@@ -640,8 +640,6 @@ db.createReadStream({ keys: true, values: false })
   })
 ```
 
-<a name="createValueStream"></a>
-
 ### db.createValueStream(queryArgs)
 
 Returns a [Readable Stream](https://nodejs.org/docs/latest/api/stream.html#stream_readable_streams) of values rather than key-value pairs. Use the same options as described for <a href="#createReadStream"><code>createReadStream</code></a> to control the range and direction.
@@ -662,7 +660,7 @@ db.createReadStream({ keys: false, values: true })
 ```
 </details>
 
-## Event API
+<details><summary>Event API</summary>
 
 #### .on(event: string, callback: (eventData) => void): void
 Subscribe to a specific event.
@@ -721,12 +719,14 @@ You can listen for the following events:
 | compact-start  | When a compaction is starting.                              |
 | compact-end    | After a compaction has completed.                           |
 
+</details>
+
 ### Tips / Limitations
 - Keys and values can technically be almost any size, but try to keep them under 10 megabytes.
 - Using transactions will batch writes/deletes together into a single disk seek, use them when you can.
 - Transactions cannot be nested.  Make sure you close each transaction before starting a new one.
 - Keys are kept in javascript memory for performance, in practice the size of the database you can have with SnapDB will be limited by how much memory nodejs/electron has access to and how much space your keys occupy.
-- Larger transactions take more memory to compact, if you run out of memory during a transaction then break it up into smaller chunks.  Transactions in the tens of megabytes or 10s of thousands of rows should bine, hundreds of thousands of rows or hundreds of megabytes will likely be problematic.
+- Larger transactions take more memory to compact, if you run out of memory during a transaction then break it up into smaller chunks.  Transactions in the tens of megabytes or 10s of thousands of rows should be fine, hundreds of thousands of rows or hundreds of megabytes will likely be problematic.
 - If you need to store millions of rows or hundreds of gigabytes worth of data RocksDB/LevelDB is a *much* better choice.
 
 ## How LSM Tree Databases Work

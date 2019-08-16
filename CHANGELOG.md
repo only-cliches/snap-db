@@ -1,3 +1,6 @@
+# [1.1.3]
+- Resolved issue [#8](https://github.com/ClickSimply/snap-db/issues/8), `ready` is called right away if the database is already ready.
+
 # [1.1.2] 08-14-2019
 - Resolved issue [#2](https://github.com/ClickSimply/snap-db/issues/2), `.ready` no longer needs to be called to start using the database.
 - Resolved issue [#1](https://github.com/ClickSimply/snap-db/issues/1), added async iterable versions of all looping functions.

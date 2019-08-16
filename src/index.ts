@@ -286,10 +286,14 @@ export class SnapDB<K> {
     /**
      * This resolves when the database is ready to use.
      *
-     * @returns {Promise<any>}
+     * @returns {Promise<void>}
      * @memberof SnapDB
      */
-    public ready(callback?: () => void): Promise<any> {
+    public ready(callback?: () => void): Promise<void> {
+        if (this._isReady) {
+            if (callback) callback();
+            return Promise.resolve();
+        }
         return new Promise((res, rej) => {
             const readyCB = () => {
                 if (callback) callback();

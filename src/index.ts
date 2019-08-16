@@ -781,6 +781,44 @@ export class SnapDB<K> {
     }
 
     /**
+     * Check if a key exists or not.
+     *
+     * @param {K} key
+     * @param {(err: any, exists: boolean) => void} [callback]
+     * @returns {Promise<boolean>}
+     * @memberof SnapDB
+     */
+    public exists(key: K, callback?: (err: any, exists?: boolean) => void): Promise<boolean> {
+        return this._doWhenReady((res, rej) => {
+            if (this._worker) {
+
+                const msgId = this._msgID((data) => {
+                    if (data[0]) {
+                        rej(data[0]);
+                    } else {
+                        res(data[1]);
+                    }
+                    if (callback) callback(data[0], data[1]);
+                })
+
+                this._worker.send({ type: "snap-exists", key: key, id: msgId });
+            } else {
+
+                try {
+                    const data = this._database.exists(key);
+                    res(data);
+                    if (callback) callback(undefined, data);
+                    if (this._hasEvents) this._rse.trigger("exists", { target: this, tx: rand(), time: Date.now(), data: data });
+                } catch (e) {
+                    rej(e);
+                    if (callback) callback(e);
+                    if (this._hasEvents) this._rse.trigger("exists", { target: this, tx: rand(), time: Date.now(), error: e });
+                }
+            }
+        });
+    }
+
+    /**
      * Begins a transaction.
      *
      * @returns {Promise<any>}

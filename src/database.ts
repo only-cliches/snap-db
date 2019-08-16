@@ -154,6 +154,34 @@ export class SnapDatabase {
 
     }
 
+    public exists(key: any): boolean {
+
+        // check cache first
+        if (this.memoryCache) {
+            if (typeof this._cache[key] !== "undefined") {
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        // check memtable
+        const memValue = this._memTable.get(key);
+        if (typeof memValue !== "undefined") {
+            if (memValue === NULLBYTE) { // tombstone
+                return false;
+            }
+            return true;
+        }
+
+        // check index
+        const index = this._index.get(key);
+        if (typeof index !== "undefined") {
+            return true;
+        }
+        return false;
+    }
+
     public delete(key: any) {
 
         this._index = this._index.remove(key);
@@ -577,6 +605,13 @@ export class SnapDatabase {
                         if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "get", data: [undefined, this.get(key)] })
                     } catch (e) {
                         if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "get", data: ["Unable to get key or key not found!", ""] })
+                    }
+                    break;
+                case "snap-exists":
+                    try {
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "exists", data: [undefined, this.exists(key)] })
+                    } catch (e) {
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "exists", data: ["Unable to run exists query!", ""] })
                     }
                     break;
                 case "snap-del":

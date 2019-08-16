@@ -156,6 +156,21 @@ console.log(data) // "hello"
 
 </details>
 
+<details><summary>.exists</summary>
+
+#### .exists(key: any, callback?: (err: any, value: string) => void):Promise\<string\>
+Checks to see if a single key exists.  This query happens purely in memory and doesn't touch the disk, has excellent performance. Returns a promise if no callback is provided.
+
+```ts
+await db.put(20, "hello")
+// "hello" is now at key 20
+
+const data = await db.exists(20);
+console.log(data) // true
+```
+
+</details>
+
 <details><summary>.del</summary>
 
 #### .del(key: any, callback?: (err: any) => void): Promise\<void\>
@@ -174,7 +189,7 @@ await db.del(20);
 <details><summary>.getCount</summary>
 
 #### .getCount(callback?: (err: any, count: number) => void): Promise\<number\>
-Gets the total number of records in the database.  This uses a *very fast* lookup method. Returns a promise if no callback is provided.
+Gets the total number of records in the database.  This query happens purely in memory and doesn't touch the disk, has excellent performance.  Returns a promise if no callback is provided.
 
 ```ts
 await db.put(30, "hello 3");
@@ -277,7 +292,7 @@ Used to perform generic queries on the database data.  The `queryArgs` is an obj
 
 - `keys` (boolean, default: true): whether the results should contain keys.  Set to false to only get values.
 
-- `values` (boolean, default: true): whether the results should contain values.  Set to false to only get keys.
+- `values` (boolean, default: true): whether the results should contain values.  Set to false to only get keys.  If values=false the query will operate exclusively in memory and not touch the disk, it'll only loop over the keys.
 
 - `offset` Cannot be used in combination with `gt`, `gte`, `lt`, or `lte` properties.  Defines an offset from the beginning of the key list to start streaming.  If reverse=true the offset will be from the end of the key list.
 ```ts
@@ -373,7 +388,7 @@ data.on("finish", () => {
 <details><summary>.getAllKeys methods</summary>
 
 #### .getAllKeys(onKey: (key: any) => void, onComplete: (err?: any) => void, reverse?: boolean): void;
-Gets all the keys in the database, use the callback functions to capture the data.  Can optionally return the keys in reverse order.  This is orders of magnitude faster than the `getAll` method.
+Gets all the keys in the database, use the callback functions to capture the data. This query happens purely in memory and doesn't touch the disk, has excellent performance.  Can optionally return the keys in reverse order.  This is orders of magnitude faster than the `getAll` method.
 
 ```ts
 await db.put(20, "hello 2");

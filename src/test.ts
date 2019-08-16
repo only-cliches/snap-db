@@ -99,6 +99,30 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
             });
         });
 
+        it("Integer: Key Exists", (done: MochaDone) => {
+            const randomKey = data["int"][Math.floor(Math.random() * data["int"].length)][0];
+            db_int.exists(randomKey).then((exists) => {
+                try {
+                    expect(exists).to.equal(true, "Integer key doesn't exist!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            }).catch(done);
+        });
+
+        it("Integer: Key Doesn't Exist", (done: MochaDone) => {
+            const impossibleKey = Date.now();
+            db_int.exists(impossibleKey).then((exists) => {
+                try {
+                    expect(exists).to.equal(false, "Integer key exists!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            }).catch(done);
+        });
+
         it("Integer: Delete Key", (done: MochaDone) => {
             const thisValue = data["int"].splice(42, 1).pop() as [any, any];
 
@@ -191,6 +215,30 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
                     done(e);
                 }
             });
+        });
+
+        it("Float: Key Exists", (done: MochaDone) => {
+            const randomKey = data["flt"][Math.floor(Math.random() * data["flt"].length)][0];
+            db_flt.exists(randomKey).then((exists) => {
+                try {
+                    expect(exists).to.equal(true, "Float key doesn't exist!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            }).catch(done);
+        });
+
+        it("Float: Key Doesn't Exist", (done: MochaDone) => {
+            const impossibleKey = Date.now();
+            db_flt.exists(impossibleKey).then((exists) => {
+                try {
+                    expect(exists).to.equal(false, "Float key exists!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            }).catch(done);
         });
 
         it("Float: Delete Key", (done: MochaDone) => {
@@ -293,6 +341,30 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
                     done(e);
                 }
             });
+        });
+
+        it("String: Key Exists", (done: MochaDone) => {
+            const randomKey = data["str"][Math.floor(Math.random() * data["str"].length)][0];
+            db_str.exists(randomKey).then((exists) => {
+                try {
+                    expect(exists).to.equal(true, "String key doesn't exist!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            }).catch(done);
+        });
+
+        it("String: Key Doesn't Exist", (done: MochaDone) => {
+            const impossibleKey = "There is no way this combination of letters and spaces will happen.";
+            db_str.exists(impossibleKey).then((exists) => {
+                try {
+                    expect(exists).to.equal(false, "String key exists!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            }).catch(done);
         });
 
         it("String: Delete Key", (done: MochaDone) => {

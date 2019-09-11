@@ -1,8 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import { SnapManifest, writeManifestUpdate, fileName, VERSION, SnapIndex, tableGenerator, NULLBYTE } from "./common";
-import { BloomFilter, IbloomFilterObj } from "./bloom";
-import { createRBTree } from "./rbtree";
+import { BloomFilter, IbloomFilterObj } from "./lib_bloom";
+import { createRBTree } from "./lib_rbtree";
 
 export class SnapCompactor {
 

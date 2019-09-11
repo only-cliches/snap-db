@@ -772,12 +772,14 @@ Each compaction normally won't move records across more than one set of Levels. 
 
 Once a log flush/compaction completes these actions are performed, in this order:
 
-1. A new manifest file is written describing the new Level files with the expired ones removed.
-2. The log file is deleted/emptied.
-3. The memtable is emptied. 
+1. A new temporary manifest file is written describing the new Level files with the expired ones removed.
+2. The log file & memtable are flushed.
+3. The main manifest file is deleted and replaced with the temporary one created in step 1.
 4. Expired Level files are deleted.
 
-The order of operations guarantees that if there is a crash at any point before, during or after compaction the database remains in a state that can easily be recovered from with no possibility of data loss.  The absolute worst case is a compaction is performed that ends up being discarded and must be done again.
+When the database is loaded it looks for and prioritizes loading the contents of the temporary manifest file.
+
+This order of operations guarantees that if there is a crash at any point before, during or after compaction the database remains in a state that can easily be recovered from with no possibility of data loss.  The absolute worst case is a compaction is performed that ends up being discarded and must be done again.
 
 Additionally, individual log writes and database files are stored with checksums to guarantee file and log integrity.
 

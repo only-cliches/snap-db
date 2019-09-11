@@ -1,5 +1,7 @@
 # [1.1.6]
 - Readme tweaks.
+- GET performance improvements.
+- Minor refactoring.
 
 # [1.1.5] 08-16-2019
 - Readme tweaks.

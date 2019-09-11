@@ -1,8 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import { SnapManifest, writeManifestUpdate, fileName, VERSION, throttle, SnapIndex, NULLBYTE, tableGenerator, rand, QueryArgs } from "./common";
-import { BloomFilter, MurmurHash3, IbloomFilterObj } from "./bloom";
-import { createRBTree, RedBlackTree, RedBlackTreeIterator } from "./rbtree";
+import { BloomFilter, MurmurHash3, IbloomFilterObj } from "./lib_bloom";
+import { createRBTree, RedBlackTree, RedBlackTreeIterator } from "./lib_rbtree";
 
 const snapCompare = (a, b) => {
     if (a === b) return 0;
@@ -37,7 +37,7 @@ export class SnapDatabase {
     public txNum: number = Math.round(Math.random() * 256);
 
     private _bloomCache: {
-        [fileName: number]: IbloomFilterObj;
+        [fileName: number]: {cache: IbloomFilterObj, lastUsed: number}
     } = {};
 
     private _indexFileCache: {
@@ -46,14 +46,34 @@ export class SnapDatabase {
 
     private _index: RedBlackTree = createRBTree(snapCompare);
 
-    private _indexCacheClear = throttle(this, () => {
-        Object.keys(this._indexFileCache).forEach((fileNum) => {
+    private _maybeCacheClear = throttle(this, () => {
+
+        // clear out cache that wasn't used more than 10 seconds ago
+        const deleteTime = Date.now() + 10000;
+
+        const indexIDs = Object.keys(this._indexFileCache);
+        let i = 0;
+        while(i < indexIDs.length) {
+            const fileNum = indexIDs[i];
             const cache: { cache: SnapIndex, lastUsed: number } = this._indexFileCache[fileNum];
-            // clear out cache that wasn't used more than 5 seconds ago
-            if (cache.lastUsed > Date.now() + 5000) {
+            if (cache.lastUsed > deleteTime) {
                 delete this._indexFileCache[fileNum];
             }
-        })
+            i++;
+        }
+
+        i = 0;
+        const bloomIDs = Object.keys(this._bloomCache);
+
+        while(i < bloomIDs.length) {
+            const fileNum = bloomIDs[i];
+            const cache: { cache: IbloomFilterObj, lastUsed: number } = this._bloomCache[fileNum];
+            if (cache.lastUsed > deleteTime) {
+                delete this._bloomCache[fileNum];
+            }
+            i++;
+        }
+
     }, 5000);
 
     public ready: boolean;
@@ -215,7 +235,7 @@ export class SnapDatabase {
 
         delete this._cache[key];
 
-        if (!this._doingTx) this.flushLog();
+        if (!this._doingTx) this.maybeFlushLog();
         return key;
     }
 
@@ -259,20 +279,50 @@ export class SnapDatabase {
         // flush to disk
         if (!this._doingTx) {
             fs.fsyncSync(this._logHandle);
-            this.flushLog();
+            this.maybeFlushLog();
         }
     }
 
     private _getBloom(fileID: number) {
         if (this._bloomCache[fileID]) {
-            return this._bloomCache[fileID];
+            this._bloomCache[fileID].lastUsed = Date.now();
+            return this._bloomCache[fileID].cache;
         }
-        this._bloomCache[fileID] = JSON.parse(fs.readFileSync(path.join(this._path, fileName(fileID) + ".bom"), "utf-8"));
-        return this._bloomCache[fileID];
+        this._bloomCache[fileID] = {cache: JSON.parse(fs.readFileSync(path.join(this._path, fileName(fileID) + ".bom"), "utf-8")), lastUsed: Date.now()};
+        return this._bloomCache[fileID].cache;
+    }
+
+    private _maybeGetValue(strKey: string, fileID: number) {
+
+        const index: SnapIndex = this._indexFileCache[fileID] ? this._indexFileCache[fileID].cache : JSON.parse(fs.readFileSync(path.join(this._path, fileName(fileID) + ".idx"), "utf-8"));
+
+        if (this._indexFileCache[fileID]) {
+            this._indexFileCache[fileID].lastUsed = Date.now();
+        } else {
+            this._indexFileCache[fileID] = { cache: index, lastUsed: Date.now() };
+        }
+
+        if (typeof index.keys[strKey] !== "undefined") { // bloom filter miss if undefined
+            let dataStart = index.keys[strKey][0];
+            let dataLength = index.keys[strKey][1];
+
+            // tombstone found
+            if (dataStart === -1) { 
+                return {type: "data", data: undefined};
+            }
+
+            // data found
+            const fd = fs.openSync(path.join(this._path, fileName(fileID) + ".dta"), "r");
+            let buff = Buffer.alloc(dataLength);
+            fs.readSync(fd, buff, 0, dataLength, dataStart);
+            fs.closeSync(fd);
+            return {type: "data", data: buff.toString("utf-8")};
+        }
+        return {type: "miss", data: undefined};
     }
 
     public get(key: any, skipCache?: boolean): string | undefined {
-        this._indexCacheClear();
+        this._maybeCacheClear();
 
         // check cache first
         if (this.memoryCache && !skipCache) {
@@ -285,35 +335,29 @@ export class SnapDatabase {
 
         // check memtable
         const memValue = this._memTable.get(key);
-        if (typeof memValue !== "undefined") {
+        if (typeof memValue !== "undefined") { // found value in mem table
             if (memValue === NULLBYTE) { // tombstone
                 return undefined;
             }
-            let buff = Buffer.alloc(memValue.offset[1]);
+            let buff = Buffer.alloc(memValue.offset[1]); // length/size
             fs.readSync(this._logHandle, buff, 0, memValue.offset[1], memValue.offset[0]);
             return buff.toString("utf-8");
         }
 
         // find latest key entry on disk
         const strKey = String(key);
-        let candidateFiles: number[] = [];
+
         let i = 0;
-        while (i < this._manifestData.lvl.length) {
+        while (i < this._manifestData.lvl.length) { // go through each level, starting at level 0
             const lvl = this._manifestData.lvl[i];
             let k = 0;
-            while (k < lvl.files.length) {
+            while (k < lvl.files.length) { // loop through all files in this level
                 const fileInfo = lvl.files[k];
-                if (i === 0) { // level 0, no range check
+                if (fileInfo.range[0] <= key && fileInfo.range[1] >= key) {
                     const bloom = this._getBloom(fileInfo.i);
                     if (BloomFilter.contains(bloom.vData, bloom.nHashFuncs, bloom.nTweak, strKey)) {
-                        candidateFiles.push(fileInfo.i);
-                    }
-                } else { // level 1+, do range check then bloom filter
-                    if (fileInfo.range[0] <= key && fileInfo.range[1] >= key) {
-                        const bloom = this._getBloom(fileInfo.i);
-                        if (BloomFilter.contains(bloom.vData, bloom.nHashFuncs, bloom.nTweak, strKey)) {
-                            candidateFiles.push(fileInfo.i);
-                        }
+                        const value = this._maybeGetValue(strKey, fileInfo.i);
+                        if (value.type !== "miss") return value.data;
                     }
                 }
                 k++;
@@ -321,45 +365,10 @@ export class SnapDatabase {
             i++;
         }
 
-        // no candidates found, key doesn't exist
-        if (candidateFiles.length === 0) {
-            return undefined;
-        }
-
-        // newer files first
-        candidateFiles = candidateFiles.sort((a, b) => a < b ? 1 : -1);
-
-        let fileIdx = 0;
-        while (fileIdx < candidateFiles.length) {
-            const fileID = candidateFiles[fileIdx];
-
-            const index: SnapIndex = this._indexFileCache[fileID] ? this._indexFileCache[fileID].cache : JSON.parse(fs.readFileSync(path.join(this._path, fileName(fileID) + ".idx"), "utf-8"));
-
-            if (this._indexFileCache[fileID]) {
-                this._indexFileCache[fileID].lastUsed = Date.now();
-            } else {
-                this._indexFileCache[fileID] = { cache: index, lastUsed: Date.now() };
-            }
-
-            if (typeof index.keys[strKey] !== "undefined") { // bloom filter miss if undefined
-                let dataStart = index.keys[strKey][0];
-                let dataLength = index.keys[strKey][1];
-                if (dataStart === -1) { // tombstone found
-                    return undefined;
-                }
-                const fd = fs.openSync(path.join(this._path, fileName(fileID) + ".dta"), "r");
-                let buff = Buffer.alloc(dataLength);
-                fs.readSync(fd, buff, 0, dataLength, dataStart);
-                fs.closeSync(fd);
-                return buff.toString("utf-8");
-            }
-            fileIdx++
-        };
-
         return undefined;
     }
 
-    public flushLog(forceFlush?: boolean) {
+    public maybeFlushLog(forceFlush?: boolean) {
         if (this._doingTx || this._isCompacting) {
             return;
         }
@@ -407,7 +416,7 @@ export class SnapDatabase {
                         fs.unlinkSync(path.join(this._path, fileName(fileID) + ".idx"));
                         fs.unlinkSync(path.join(this._path, fileName(fileID) + ".bom"));
                     } catch (e) {
-
+                        // no error if the delete fails, doesn't matter
                     }
                 });
 
@@ -449,7 +458,7 @@ export class SnapDatabase {
 
         this._doingTx = false;
 
-        this.flushLog();
+        this.maybeFlushLog();
     }
 
     public compactDone() {
@@ -582,7 +591,7 @@ export class SnapDatabase {
                     }
                     break;
                 case "do-compact":
-                    this.flushLog(true);
+                    this.maybeFlushLog(true);
                     break;
                 case "snap-new-iterator":
                     try {
@@ -847,7 +856,7 @@ export class SnapDatabase {
                 this._loadCache();
 
                 // flush logs if needed
-                this.flushLog();
+                this.maybeFlushLog();
 
                 this.ready = true;
                 if (process.send) process.send({ type: "snap-ready" });
@@ -1006,7 +1015,7 @@ export class SnapDatabase {
             this._loadCache();
 
             // flush logs if needed
-            this.flushLog();
+            this.maybeFlushLog();
             this.ready = true;
 
             if (process.send) process.send({ type: "snap-ready" });

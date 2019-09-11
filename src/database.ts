@@ -333,6 +333,9 @@ export class SnapDatabase {
             }
         }
 
+        // check if it's in the index at all
+        if (this.exists(key) === false) return undefined;
+
         // check memtable
         const memValue = this._memTable.get(key);
         if (typeof memValue !== "undefined") { // found value in mem table

@@ -1,7 +1,7 @@
 import * as path from "path";
 import { fork, ChildProcess } from "child_process";
 import { VERSION, fileName as fNameFN, rand, QueryArgs } from "./common";
-import { ReallySmallEvents } from "./rse";
+import { ReallySmallEvents } from "./lib_rse";
 import * as fs from "fs";
 import { SnapDatabase } from "./database";
 import * as stream from "stream";
@@ -9,8 +9,6 @@ import * as stream from "stream";
 const messageBuffer: {
     [messageId: string]: (values: string[]) => void;
 } = {};
-
-
 
 export interface SnapEvent {
     target: SnapDB<any>,
@@ -241,7 +239,7 @@ export class SnapDB<K> {
             if (this._worker) {
                 this._worker.send({ type: "do-compact" });
             } else {
-                this._database.flushLog(true);
+                this._database.maybeFlushLog(true);
                 this._compactor.send("do-compact");
             }
 

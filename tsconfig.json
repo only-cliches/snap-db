@@ -22,7 +22,7 @@
         "src/test-single.ts",
         "src/test-multi.ts",
         "src/compact.ts",
-        "src/bloom.ts"
+        "src/lib_bloom.ts"
     ],
     "exclude": [
         "node_modules"

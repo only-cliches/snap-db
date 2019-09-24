@@ -1,10 +1,10 @@
 import * as fs from "fs";
 import * as path from "path";
-import { IbloomFilterObj, BloomFilter, MurmurHash3 } from "./bloom";
-import { RedBlackTree } from "./rbtree";
-import { Sha1 } from "./sha1";
+import { IbloomFilterObj, BloomFilter, MurmurHash3 } from "./lib_bloom";
+import { RedBlackTree } from "./lib_rbtree";
+import { Sha1 } from "./lib_sha1";
 
-export const VERSION = 1.15;
+export const VERSION = 1.16;
 
 export const NULLBYTE = Buffer.from([0]);
 

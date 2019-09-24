@@ -1,4 +1,4 @@
-# [1.1.6]
+# [1.1.6] 09-24-2019
 - Readme tweaks.
 - Fixed issue with log loading.
 - Added additional tests for log loading.

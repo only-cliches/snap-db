@@ -351,7 +351,6 @@ export class SnapDatabase {
         }
 
         // find latest key entry on disk
-        const strKey = String(key);
 
         let i = 0;
         while (i < this._manifestData.lvl.length) { // go through each level, starting at level 0
@@ -361,6 +360,7 @@ export class SnapDatabase {
                 const fileInfo = lvl.files[k];
                 if (fileInfo.range[0] <= key && fileInfo.range[1] >= key) {
                     const bloom = this._getBloom(fileInfo.i);
+                    const strKey = String(key);
                     if (BloomFilter.contains(bloom.vData, bloom.nHashFuncs, bloom.nTweak, strKey)) {
                         const value = this._maybeGetValue(strKey, fileInfo.i);
                         if (value.type !== "miss") return value.data;

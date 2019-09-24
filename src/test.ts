@@ -12,11 +12,16 @@ function makeid() {
     return text;
 }
 
-export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<any>, db_flt: SnapDB<any>, db_any: SnapDB<any>) => {
+export const runTests = (testName: string, new_str: () => SnapDB<any>, new_int: () => SnapDB<any>, new_flt: () => SnapDB<any>, new_any: () => SnapDB<any>) => {
 
     let data: {
         [key: string]: [any, any][];
     } = {};
+
+    const db_str = new_str();
+    const db_int = new_int();
+    const db_flt = new_flt();
+    const db_any = new_any();
 
     describe(testName, () => {
         it("Put Data", (done: MochaDone) => {
@@ -216,6 +221,28 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
             }, true);
         });
 
+        it("Integer: Loading From Log Works", (done: MochaDone) => {
+
+            db_int.close().then(() => {
+
+                const db2 = new_int();
+                let dataFromDB: any[] = [];
+                db2.getAll((key, value) => {
+                    dataFromDB.push([key, value]);
+                }, () => {
+                    try {
+                        expect(dataFromDB).to.deep.equal(data["int"], "Failed to load database from logs!");
+                        done();
+                    } catch (e) {
+                        done(e);
+                    }
+                });
+            });
+        });
+
+
+
+
         it("Float: Sorted Keys", (done: MochaDone) => {
             data["flt"] = data["flt"].sort((a, b) => a[0] > b[0] ? 1 : -1);
             let dataFromDB: any[] = [];
@@ -333,6 +360,25 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
                 }
                 db_flt.close();
             }, true);
+        });
+
+        it("Float: Loading From Log Works", (done: MochaDone) => {
+
+            db_flt.close().then(() => {
+
+                const db2 = new_flt();
+                let dataFromDB: any[] = [];
+                db2.getAll((key, value) => {
+                    dataFromDB.push([key, value]);
+                }, () => {
+                    try {
+                        expect(dataFromDB).to.deep.equal(data["flt"], "Failed to load database from logs!");
+                        done();
+                    } catch (e) {
+                        done(e);
+                    }
+                });
+            });
         });
 
 
@@ -456,6 +502,25 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
             }, true);
         });
 
+        it("String: Loading From Log Works", (done: MochaDone) => {
+
+            db_str.close().then(() => {
+
+                const db2 = new_str();
+                let dataFromDB: any[] = [];
+                db2.getAll((key, value) => {
+                    dataFromDB.push([key, value]);
+                }, () => {
+                    try {
+                        expect(dataFromDB).to.deep.equal(data["str"], "Failed to load database from logs!");
+                        done();
+                    } catch (e) {
+                        done(e);
+                    }
+                });
+            });
+        });
+
 
 
 
@@ -506,19 +571,19 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
         it("Any: Delete Key", (done: MochaDone) => {
             const thisValue = data["any"].splice(42, 1).pop() as [any, any];
 
-            db_any.delete(thisValue[0])
-            let dataFromDB: any[] = [];
-            db_any.getAll((key, value) => {
-                dataFromDB.push([key, value]);
-            }, () => {
-                try {
-                    expect(dataFromDB).to.deep.equal(data["any"], "Any key not deleted!");
-                    done();
-                } catch (e) {
-                    done(e);
-                }
-            });
-
+            db_any.delete(thisValue[0]).then(() => {
+                let dataFromDB: any[] = [];
+                db_any.getAll((key, value) => {
+                    dataFromDB.push([key, value]);
+                }, () => {
+                    try {
+                        expect(dataFromDB).to.deep.equal(data["any"], "Any key not deleted!");
+                        done();
+                    } catch (e) {
+                        done(e);
+                    }
+                });
+            })
         });
 
         it("Any: Offset Select", (done: MochaDone) => {
@@ -581,6 +646,28 @@ export const runTests = (testName: string, db_str: SnapDB<any>, db_int: SnapDB<a
 
             }, true);
         });
+
+        it("Any: Loading From Log Works", (done: MochaDone) => {
+
+            db_any.close().then(() => {
+
+                const db2 = new_any();
+                let dataFromDB: any[] = [];
+                db2.getAll((key, value) => {
+                    dataFromDB.push([key, value]);
+                }, () => {
+                    db2.close();
+                    try {
+                        expect(dataFromDB).to.deep.equal(data["any"], "Failed to load database from logs!");
+                        done();
+                    } catch (e) {
+                        done(e);
+                    }
+                    process.exit();
+                });
+            });
+        });
+
     });
 
 }

@@ -191,12 +191,15 @@ export class SnapDatabase {
 
         this._index = this._index.remove(key);
 
-        const keyLen = String(key).length;
+        const keyStr = (this.keyType === "any" ? (typeof key === "number" ? "n>" : "s>") : "") + String(key);
+
+        const keyLen = keyStr.length;
+        
 
         fs.writeSync(this._logHandle, NULLBYTE);
         this._memTableSize++;
 
-        const tombStone = keyLen + "," + String(key) + ",-1";
+        const tombStone = keyLen + "," + keyStr + ",-1";
         const hash = "," + String(MurmurHash3(0, tombStone));
         fs.writeSync(this._logHandle, ":" + tombStone);
         fs.writeSync(this._logHandle, hash);
@@ -228,7 +231,7 @@ export class SnapDatabase {
             this._cache[key] = value;
         }
 
-        const keyStr = (this.keyType === "any" ? (typeof key === "number" ? "n:" : "s:") : "") + String(key);
+        const keyStr = (this.keyType === "any" ? (typeof key === "number" ? "n>" : "s>") : "") + String(key);
         const valueStr = String(value);
 
         // mark key in memtable
@@ -236,7 +239,7 @@ export class SnapDatabase {
             this._memTable = this._memTable.remove(key);
         }
 
-        const meta = keyStr.length + "," + keyStr + "," + (this._memTableSize + 1) + "," + valueStr.length
+        const meta = keyStr.length + "," + keyStr + "," + (this._memTableSize + 1) + "," + valueStr.length;
         const hash = "," + String(MurmurHash3(0, meta + valueStr));
 
         // write value to log
@@ -754,7 +757,6 @@ export class SnapDatabase {
                             keyData = line[k] + keyData;
                         }
                     }
-
                     stop = false;
                     k = 0;
                     let keyLenStr: string = "";
@@ -780,7 +782,7 @@ export class SnapDatabase {
                     }
                     ptr += keyLength + 1;
 
-                    let parsedKey = this.keyType === "any" ? (key.slice(0, 2) === "n:" ? parseFloat(key.slice(2)) : key.slice(2)) : (this.keyType === "string" ? key : parseFloat(key));
+                    let parsedKey = this.keyType === "any" ? (key.slice(0, 2) === "n>" ? parseFloat(key.slice(2)) : key.slice(2)) : (this.keyType === "string" ? key : parseFloat(key));
                     let parsedValueData = keyData.substr(ptr).split(",").map(s => parseInt(s));
 
                     this._memTable = this._memTable.remove(parsedKey);
@@ -797,9 +799,8 @@ export class SnapDatabase {
                         const length = parsedValueData[1];
                         const hash = parsedValueData[2];
 
-                        this._index = this._index.insert(parsedKey, NULLBYTE);
-
                         if (hash === MurmurHash3(0, keyLength + "," + key + "," + start + "," + length + line.substr(0, valueBreak))) {
+                            this._index = this._index.insert(parsedKey, NULLBYTE);
                             if (tx !== -1) {
                                 txKeys.push([parsedKey, start, length]);
                             } else {
@@ -817,10 +818,10 @@ export class SnapDatabase {
             readStream.on("data", (chunk: Buffer) => {
                 let i = 0;
                 while (i < chunk.length) {
-                    if (chunk[i] === 0) {
+                    if (chunk[i] === 0 && buffer.length) {
                         processLog(buffer);
                         buffer = "";
-                    } else {
+                    } else if (chunk[i] !== 0) {
                         buffer += String.fromCharCode(chunk[i]);
                     }
                     i++;
@@ -832,6 +833,7 @@ export class SnapDatabase {
                     processLog(buffer);
                     buffer = "";
                 }
+
                 this._isConnecting = true;
                 this._memTableSize = size;
 
@@ -962,11 +964,11 @@ export class SnapDatabase {
             let tx: number = 0;
             let batches: string[] = [];
             events.filter(v => v && v.length).forEach((event) => {
-                if (event.indexOf("TX-START") === 0) { // start transaction
+                if (event.indexOf("TX-START-") === 0) { // start transaction
                     // clear previouse transaction data
                     tx = parseInt(event.replace("TX-START-", ""));
                     batches = [];
-                } else if (event.indexOf("TX-END") === 0) { // end of transaction
+                } else if (event.indexOf("TX-END-") === 0) { // end of transaction
                     const endTx = tx = parseInt(event.replace("TX-END-", ""));
                     if (endTx === tx) { // commit batch
                         batches.forEach((bEvent) => {
@@ -1029,7 +1031,7 @@ export class SnapDatabase {
                             const keys = Object.keys(index.keys);
                             let i = keys.length;
                             while (i--) {
-                                const key = this.keyType === "any" ? (keys[i].slice(0, 2) === "n:" ? parseFloat(keys[i].slice(2)) : keys[i].slice(2)) : (this.keyType === "string" ? keys[i] : parseFloat(keys[i]));
+                                const key = this.keyType === "any" ? (keys[i].slice(0, 2) === "n>" ? parseFloat(keys[i].slice(2)) : keys[i].slice(2)) : (this.keyType === "string" ? keys[i] : parseFloat(keys[i]));
                                 if (index.keys[keys[i]][0] === -1) { // delete
                                     this._index = this._index.remove(key);
                                 } else { // add

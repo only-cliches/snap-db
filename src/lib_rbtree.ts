@@ -30,14 +30,14 @@ const RED = 0, BLACK = 1;
 
 export class RBNode {
 
-    public _color: any;
+    public _color: 0 | 1;
     public key: any;
     public value: any;
-    public left: any;
-    public right: any;
-    public _count: any;
+    public left: RBNode|null;
+    public right: RBNode|null;
+    public _count: number;
 
-    constructor(color, key, value, left, right, count) {
+    constructor(color: 0 | 1, key: any, value: any, left: RBNode|null, right: RBNode|null, count: number) {
         this._color = color
         this.key = key
         this.value = value
@@ -62,15 +62,16 @@ function recount(node) {
 export class RedBlackTree {
 
     private _compare: (a, b) => number;
-    private root: any;
+    private root: RBNode|null;
 
-    constructor(compare: (a, b) => number, root?: any) {
+    constructor(compare: (a, b) => number, root: RBNode|null) {
         this._compare = compare
-        this.root = root
+
+        this.root = root;
     }
 
     keys() {
-        var result: any[] = []
+        let result: any[] = []
         this.forEach((k, v) => {
             result.push(k)
         })
@@ -78,7 +79,7 @@ export class RedBlackTree {
     }
 
     values() {
-        var result: any[] = []
+        let result: any[] = []
         this.forEach((k, v) => {
             result.push(v)
         })
@@ -92,16 +93,16 @@ export class RedBlackTree {
         return 0
     }
 
-    insert(key, value) {
-        var cmp = this._compare
+    insert(key: any, value: any) {
+        let cmp = this._compare
         //Find point to insert new node at
-        var n = this.root
-        var n_stack: any[] = []
-        var d_stack: any[] = []
+        let n = this.root
+        let n_stack: RBNode[] = [];
+        let d_stack: number[] = [];
         while (n) {
-            var d = cmp(key, n.key)
-            n_stack.push(n)
-            d_stack.push(d)
+            let d = cmp(key, n.key);
+            n_stack.push(n);
+            d_stack.push(d);
             if (d <= 0) {
                 n = n.left
             } else {
@@ -110,8 +111,8 @@ export class RedBlackTree {
         }
         //Rebuild path to leaf node
         n_stack.push(new RBNode(RED, key, value, null, null, 1))
-        for (var s = n_stack.length - 2; s >= 0; --s) {
-            var n = n_stack[s]
+        for (let s = n_stack.length - 2; s >= 0; --s) {
+            let n = n_stack[s]
             if (d_stack[s] <= 0) {
                 n_stack[s] = new RBNode(n._color, n.key, n.value, n_stack[s + 1], n.right, n._count + 1)
             } else {
@@ -120,16 +121,16 @@ export class RedBlackTree {
         }
         //Rebalance tree using rotations
         //console.log("start insert", key, d_stack)
-        for (var s = n_stack.length - 1; s > 1; --s) {
-            var p = n_stack[s - 1]
-            var n = n_stack[s]
+        for (let s = n_stack.length - 1; s > 1; --s) {
+            let p = n_stack[s - 1]
+            let n = n_stack[s]
             if (p._color === BLACK || n._color === BLACK) {
                 break
             }
-            var pp = n_stack[s - 2]
+            let pp = n_stack[s - 2]
             if (pp.left === p) {
                 if (p.left === n) {
-                    var y = pp.right
+                    let y = pp.right
                     if (y && y._color === RED) {
                         //console.log("LLr")
                         p._color = BLACK
@@ -147,7 +148,7 @@ export class RedBlackTree {
                         recount(pp)
                         recount(p)
                         if (s >= 3) {
-                            var ppp = n_stack[s - 3]
+                            let ppp = n_stack[s - 3]
                             if (ppp.left === pp) {
                                 ppp.left = p
                             } else {
@@ -157,7 +158,7 @@ export class RedBlackTree {
                         break
                     }
                 } else {
-                    var y = pp.right
+                    let y = pp.right
                     if (y && y._color === RED) {
                         //console.log("LRr")
                         p._color = BLACK
@@ -178,7 +179,7 @@ export class RedBlackTree {
                         recount(p)
                         recount(n)
                         if (s >= 3) {
-                            var ppp = n_stack[s - 3]
+                            let ppp = n_stack[s - 3]
                             if (ppp.left === pp) {
                                 ppp.left = n
                             } else {
@@ -190,7 +191,7 @@ export class RedBlackTree {
                 }
             } else {
                 if (p.right === n) {
-                    var y = pp.left
+                    let y = pp.left
                     if (y && y._color === RED) {
                         //console.log("RRr", y.key)
                         p._color = BLACK
@@ -208,7 +209,7 @@ export class RedBlackTree {
                         recount(pp)
                         recount(p)
                         if (s >= 3) {
-                            var ppp = n_stack[s - 3]
+                            let ppp = n_stack[s - 3]
                             if (ppp.right === pp) {
                                 ppp.right = p
                             } else {
@@ -218,7 +219,7 @@ export class RedBlackTree {
                         break
                     }
                 } else {
-                    var y = pp.left
+                    let y = pp.left
                     if (y && y._color === RED) {
                         //console.log("RLr")
                         p._color = BLACK
@@ -239,7 +240,7 @@ export class RedBlackTree {
                         recount(p)
                         recount(n)
                         if (s >= 3) {
-                            var ppp = n_stack[s - 3]
+                            let ppp = n_stack[s - 3]
                             if (ppp.right === pp) {
                                 ppp.right = n
                             } else {
@@ -279,8 +280,8 @@ export class RedBlackTree {
     }
 
     begin() {
-        var stack: any[] = []
-        var n = this.root
+        let stack: any[] = []
+        let n = this.root
         while (n) {
             stack.push(n)
             n = n.left
@@ -289,8 +290,8 @@ export class RedBlackTree {
     }
 
     end() {
-        var stack: any[] = []
-        var n = this.root
+        let stack: any[] = []
+        let n = this.root
         while (n) {
             stack.push(n)
             n = n.right
@@ -299,11 +300,13 @@ export class RedBlackTree {
     }
     //Find the ith item in the tree
     at(idx) {
-        if (idx < 0) {
-            return new RedBlackTreeIterator(this, [])
+
+        let n = this.root
+        if (idx < 0 || n === null) {
+            return new RedBlackTreeIterator(this, []);
         }
-        var n = this.root
-        var stack: any[] = []
+        
+        let stack: any[] = []
         while (true) {
             stack.push(n)
             if (n.left) {
@@ -330,12 +333,12 @@ export class RedBlackTree {
     }
 
     ge(key) {
-        var cmp = this._compare
-        var n = this.root
-        var stack: any[] = []
-        var last_ptr = 0
+        let cmp = this._compare
+        let n = this.root
+        let stack: any[] = []
+        let last_ptr = 0
         while (n) {
-            var d = cmp(key, n.key)
+            let d = cmp(key, n.key)
             stack.push(n)
             if (d <= 0) {
                 last_ptr = stack.length
@@ -351,12 +354,12 @@ export class RedBlackTree {
     }
 
     gt(key) {
-        var cmp = this._compare
-        var n = this.root
-        var stack: any[] = []
-        var last_ptr = 0
+        let cmp = this._compare
+        let n = this.root
+        let stack: any[] = []
+        let last_ptr = 0
         while (n) {
-            var d = cmp(key, n.key)
+            let d = cmp(key, n.key)
             stack.push(n)
             if (d < 0) {
                 last_ptr = stack.length
@@ -372,12 +375,12 @@ export class RedBlackTree {
     }
 
     lt(key) {
-        var cmp = this._compare
-        var n = this.root
-        var stack: any[] = []
-        var last_ptr = 0
+        let cmp = this._compare
+        let n = this.root
+        let stack: any[] = []
+        let last_ptr = 0
         while (n) {
-            var d = cmp(key, n.key)
+            let d = cmp(key, n.key)
             stack.push(n)
             if (d > 0) {
                 last_ptr = stack.length
@@ -393,12 +396,12 @@ export class RedBlackTree {
     }
 
     le(key) {
-        var cmp = this._compare
-        var n = this.root
-        var stack: any[] = []
-        var last_ptr = 0
+        let cmp = this._compare
+        let n = this.root
+        let stack: any[] = []
+        let last_ptr = 0
         while (n) {
-            var d = cmp(key, n.key)
+            let d = cmp(key, n.key)
             stack.push(n)
             if (d >= 0) {
                 last_ptr = stack.length
@@ -415,11 +418,11 @@ export class RedBlackTree {
 
     //Finds the item with key if it exists
     find(key) {
-        var cmp = this._compare
-        var n = this.root
-        var stack: any[] = []
+        let cmp = this._compare
+        let n = this.root
+        let stack: any[] = []
         while (n) {
-            var d = cmp(key, n.key)
+            let d = cmp(key, n.key)
             stack.push(n)
             if (d === 0) {
                 return new RedBlackTreeIterator(this, stack)
@@ -435,7 +438,7 @@ export class RedBlackTree {
 
     //Removes item with key from tree
     remove(key) {
-        var iter = this.find(key)
+        let iter = this.find(key)
         if (iter) {
             return iter.remove()
         }
@@ -444,10 +447,10 @@ export class RedBlackTree {
 
     //Returns the item at `key`
     get(key) {
-        var cmp = this._compare
-        var n = this.root
+        let cmp = this._compare
+        let n = this.root
         while (n) {
-            var d = cmp(key, n.key)
+            let d = cmp(key, n.key)
             if (d === 0) {
                 return n.value
             }
@@ -469,10 +472,10 @@ export class RedBlackTree {
 //Visit all nodes inorder
 function doVisitFull(visit, node) {
     if (node.left) {
-        var v = doVisitFull(visit, node.left)
+        let v = doVisitFull(visit, node.left)
         if (v) { return v }
     }
-    var v = visit(node.key, node.value)
+    let v = visit(node.key, node.value)
     if (v) { return v }
     if (node.right) {
         return doVisitFull(visit, node.right)
@@ -481,13 +484,13 @@ function doVisitFull(visit, node) {
 
 //Visit half nodes in order
 function doVisitHalf(lo, compare, visit, node) {
-    var l = compare(lo, node.key)
+    let l = compare(lo, node.key)
     if (l <= 0) {
         if (node.left) {
-            var v = doVisitHalf(lo, compare, visit, node.left)
+            let v = doVisitHalf(lo, compare, visit, node.left)
             if (v) { return v }
         }
-        var v = visit(node.key, node.value)
+        let v = visit(node.key, node.value)
         if (v) { return v }
     }
     if (node.right) {
@@ -497,9 +500,9 @@ function doVisitHalf(lo, compare, visit, node) {
 
 //Visit all nodes within a range
 function doVisit(lo, hi, compare, visit, node) {
-    var l = compare(lo, node.key)
-    var h = compare(hi, node.key)
-    var v
+    let l = compare(lo, node.key)
+    let h = compare(hi, node.key)
+    let v
     if (l <= 0) {
         if (node.left) {
             v = doVisit(lo, hi, compare, visit, node.left)
@@ -544,16 +547,16 @@ export class RedBlackTreeIterator {
 
     //Removes item at iterator from tree
     remove() {
-        var stack = this._stack
+        let stack = this._stack
         if (stack.length === 0) {
             return this.tree
         }
         //First copy path to node
-        var cstack = new Array(stack.length)
-        var n = stack[stack.length - 1]
+        let cstack = new Array(stack.length)
+        let n = stack[stack.length - 1]
         cstack[cstack.length - 1] = new RBNode(n._color, n.key, n.value, n.left, n.right, n._count)
-        for (var i = stack.length - 2; i >= 0; --i) {
-            var n = stack[i]
+        for (let i = stack.length - 2; i >= 0; --i) {
+            let n = stack[i]
             if (n.left === stack[i + 1]) {
                 cstack[i] = new RBNode(n._color, n.key, n.value, cstack[i + 1], n.right, n._count)
             } else {
@@ -570,20 +573,20 @@ export class RedBlackTreeIterator {
             //console.log("moving to leaf")
 
             //First walk to previous leaf
-            var split = cstack.length
+            let split = cstack.length
             n = n.left
             while (n.right) {
                 cstack.push(n)
                 n = n.right
             }
             //Copy path to leaf
-            var v = cstack[split - 1]
+            let v = cstack[split - 1]
             cstack.push(new RBNode(n._color, v.key, v.value, n.left, n.right, n._count))
             cstack[split - 1].key = n.key
             cstack[split - 1].value = n.value
 
             //Fix up stack
-            for (var i = cstack.length - 2; i >= split; --i) {
+            for (let i = cstack.length - 2; i >= split; --i) {
                 n = cstack[i]
                 cstack[i] = new RBNode(n._color, n.key, n.value, n.left, cstack[i + 1], n._count)
             }
@@ -596,14 +599,14 @@ export class RedBlackTreeIterator {
         if (n._color === RED) {
             //Easy case: removing red leaf
             //console.log("RED leaf")
-            var p = cstack[cstack.length - 2]
+            let p = cstack[cstack.length - 2]
             if (p.left === n) {
                 p.left = null
             } else if (p.right === n) {
                 p.right = null
             }
             cstack.pop()
-            for (var i = 0; i < cstack.length; ++i) {
+            for (let i = 0; i < cstack.length; ++i) {
                 cstack[i]._count--
             }
             return new RedBlackTree(this.tree._compare, cstack[0])
@@ -618,7 +621,7 @@ export class RedBlackTreeIterator {
                 }
                 //Child must be red, so repaint it black to balance color
                 n._color = BLACK
-                for (var i = 0; i < cstack.length - 1; ++i) {
+                for (let i = 0; i < cstack.length - 1; ++i) {
                     cstack[i]._count--
                 }
                 return new RedBlackTree(this.tree._compare, cstack[0])
@@ -629,10 +632,10 @@ export class RedBlackTreeIterator {
             } else {
                 //Hard case: Repaint n, and then do some nasty stuff
                 //console.log("BLACK leaf no children")
-                for (var i = 0; i < cstack.length; ++i) {
+                for (let i = 0; i < cstack.length; ++i) {
                     cstack[i]._count--
                 }
-                var parent = cstack[cstack.length - 2]
+                let parent = cstack[cstack.length - 2]
                 fixDoubleBlack(cstack)
                 //Fix up links
                 if (parent.left === n) {
@@ -660,10 +663,10 @@ export class RedBlackTreeIterator {
     }
 
     index() {
-        var idx = 0
-        var stack = this._stack
+        let idx = 0
+        let stack = this._stack
         if (stack.length === 0) {
-            var r = this.tree.root
+            let r = this.tree.root
             if (r) {
                 return r._count
             }
@@ -671,7 +674,7 @@ export class RedBlackTreeIterator {
         } else if (stack[stack.length - 1].left) {
             idx = stack[stack.length - 1].left._count
         }
-        for (var s = stack.length - 2; s >= 0; --s) {
+        for (let s = stack.length - 2; s >= 0; --s) {
             if (stack[s + 1] === stack[s].right) {
                 ++idx
                 if (stack[s].left) {
@@ -685,11 +688,11 @@ export class RedBlackTreeIterator {
 
     //Advances iterator to next element in list
     next() {
-        var stack = this._stack
+        let stack = this._stack
         if (stack.length === 0) {
             return
         }
-        var n = stack[stack.length - 1]
+        let n = stack[stack.length - 1]
         if (n.right) {
             n = n.right
             while (n) {
@@ -705,14 +708,14 @@ export class RedBlackTreeIterator {
         }
     }
     hasNext() {
-        var stack = this._stack
+        let stack = this._stack
         if (stack.length === 0) {
             return false
         }
         if (stack[stack.length - 1].right) {
             return true
         }
-        for (var s = stack.length - 1; s > 0; --s) {
+        for (let s = stack.length - 1; s > 0; --s) {
             if (stack[s - 1].left === stack[s]) {
                 return true
             }
@@ -722,14 +725,14 @@ export class RedBlackTreeIterator {
 
 
     update(value) {
-        var stack = this._stack
+        let stack = this._stack
         if (stack.length === 0) {
             throw new Error("Can't update empty node!")
         }
-        var cstack = new Array(stack.length)
-        var n = stack[stack.length - 1]
+        let cstack = new Array(stack.length)
+        let n = stack[stack.length - 1]
         cstack[cstack.length - 1] = new RBNode(n._color, n.key, value, n.left, n.right, n._count)
-        for (var i = stack.length - 2; i >= 0; --i) {
+        for (let i = stack.length - 2; i >= 0; --i) {
             n = stack[i]
             if (n.left === stack[i + 1]) {
                 cstack[i] = new RBNode(n._color, n.key, n.value, cstack[i + 1], n.right, n._count)
@@ -744,11 +747,11 @@ export class RedBlackTreeIterator {
 
     //Moves iterator backward one element
     prev() {
-        var stack = this._stack
+        let stack = this._stack
         if (stack.length === 0) {
             return
         }
-        var n = stack[stack.length - 1]
+        let n = stack[stack.length - 1]
         if (n.left) {
             n = n.left
             while (n) {
@@ -765,14 +768,14 @@ export class RedBlackTreeIterator {
     }
 
     hasPrev() {
-        var stack = this._stack
+        let stack = this._stack
         if (stack.length === 0) {
             return false
         }
         if (stack[stack.length - 1].left) {
             return true
         }
-        for (var s = stack.length - 1; s > 0; --s) {
+        for (let s = stack.length - 1; s > 0; --s) {
             if (stack[s - 1].right === stack[s]) {
                 return true
             }
@@ -794,8 +797,8 @@ function swapNode(n, v) {
 
 //Fix up a double black node in a tree
 function fixDoubleBlack(stack) {
-    var n, p, s, z
-    for (var i = stack.length - 1; i >= 0; --i) {
+    let n, p, s, z
+    for (let i = stack.length - 1; i >= 0; --i) {
         n = stack[i]
         if (i === 0) {
             n._color = BLACK
@@ -820,7 +823,7 @@ function fixDoubleBlack(stack) {
                 recount(p)
                 recount(s)
                 if (i > 1) {
-                    var pp = stack[i - 2]
+                    let pp = stack[i - 2]
                     if (pp.left === p) {
                         pp.left = s
                     } else {
@@ -845,7 +848,7 @@ function fixDoubleBlack(stack) {
                 recount(s)
                 recount(z)
                 if (i > 1) {
-                    var pp = stack[i - 2]
+                    let pp = stack[i - 2]
                     if (pp.left === p) {
                         pp.left = z
                     } else {
@@ -876,7 +879,7 @@ function fixDoubleBlack(stack) {
                 recount(p)
                 recount(s)
                 if (i > 1) {
-                    var pp = stack[i - 2]
+                    let pp = stack[i - 2]
                     if (pp.left === p) {
                         pp.left = s
                     } else {
@@ -909,7 +912,7 @@ function fixDoubleBlack(stack) {
                 recount(p)
                 recount(s)
                 if (i > 1) {
-                    var pp = stack[i - 2]
+                    let pp = stack[i - 2]
                     if (pp.right === p) {
                         pp.right = s
                     } else {
@@ -934,7 +937,7 @@ function fixDoubleBlack(stack) {
                 recount(s)
                 recount(z)
                 if (i > 1) {
-                    var pp = stack[i - 2]
+                    let pp = stack[i - 2]
                     if (pp.right === p) {
                         pp.right = z
                     } else {
@@ -965,7 +968,7 @@ function fixDoubleBlack(stack) {
                 recount(p)
                 recount(s)
                 if (i > 1) {
-                    var pp = stack[i - 2]
+                    let pp = stack[i - 2]
                     if (pp.right === p) {
                         pp.right = s
                     } else {

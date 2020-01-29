@@ -244,9 +244,7 @@ export class SnapDB<K> {
             }
 
             const checkDone = () => {
-
-                if (this.isClosed) return;
-
+                
                 if (this.isCompacting) {
                     setTimeout(checkDone, 100);
                 } else {

@@ -244,6 +244,10 @@ export class SnapDatabase {
 
     public put(key: any, value: string) {
 
+        // if (typeof this._index.get(key) !== "undefined") {
+        //     this._index = this._index.remove(key)
+        // }
+
         // write key to index
         this._index = this._index.insert(key, NULLBYTE);
 

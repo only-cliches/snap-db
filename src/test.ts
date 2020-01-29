@@ -82,13 +82,34 @@ export const runTests = (testName: string, new_str: () => SnapDB<any>, new_int: 
             });
         }).timeout(30000);
 
-        it("Put Data Multiple Times for One Key", (done: MochaDone) => {
-            db_str.put('a', 'b')
-            .then(() => db_str.put('a', 'c'))
+        it("The count should be zero after puting then deleting", (done: MochaDone) => {
+            const KEY = 'key'
+            const VAL = 'val'
+            
+            db_str.put(KEY, VAL)
+            .then(() => db_str.delete(KEY))
             .then(() => db_str.getCount())
             .then(result => {
                 try {
-                    expect(result).to.deep.equal(1, "re-Put failed!");
+                    expect(result).to.equal(0, "put/del size failed!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            })
+        }).timeout(30000);
+
+        it("The count should be 1 after put data to the same key multiple times", (done: MochaDone) => {
+            const KEY = 'key'
+            const VAL = 'val'
+            
+            db_str.put(KEY, VAL)
+            .then(() => db_str.put(KEY, VAL))
+            .then(() => db_str.put(KEY, VAL))
+            .then(() => db_str.getCount())
+            .then(count => {
+                try {
+                    expect(count).to.equal(1, "Re-put failed!");
                     done();
                 } catch (e) {
                     done(e);

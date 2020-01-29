@@ -82,6 +82,20 @@ export const runTests = (testName: string, new_str: () => SnapDB<any>, new_int: 
             });
         }).timeout(30000);
 
+        it("Put Data Multiple Times for One Key", (done: MochaDone) => {
+            db_str.put('a', 'b')
+            .then(() => db_str.put('a', 'c'))
+            .then(() => db_str.getCount())
+            .then(result => {
+                try {
+                    expect(result).to.deep.equal(1, "re-Put failed!");
+                    done();
+                } catch (e) {
+                    done(e);
+                }
+            })
+        }).timeout(30000);
+
         it("Get non-exist key", (done: MochaDone) => {
             db_str.get('non-exist-key').then((val) => {
                 try {

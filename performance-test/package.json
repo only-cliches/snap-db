@@ -12,6 +12,6 @@
   "dependencies": {
     "diskdb": "^0.1.17",
     "level": "^5.0.1",
-    "rimraf": "^2.6.3"
+    "rimraf": "^4.0.0"
   }
 }

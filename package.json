@@ -1,50 +1,66 @@
 {
   "name": "snap-db",
-  "version": "1.1.6",
+  "version": "1.5.0",
   "description": "Fast & Durable pure javascript key-value store for NodeJS/Electron",
-  "main": "bin/index.js",
-  "typings": "bin/index.d.ts",
+  "type": "commonjs",
+  "main": "bin/src/index.js",
+  "module": "bin/src/index.mjs",
+  "types": "bin/src/index.d.ts",
+  "typings": "bin/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./bin/src/index.d.ts",
+      "import": "./bin/src/index.mjs",
+      "require": "./bin/src/index.js",
+      "default": "./bin/src/index.js"
+    }
+  },
   "scripts": {
-    "build": "rm -rf bin && mkdir bin && tsc",
-    "test": "tsc && rm -rf testDB* && mocha bin/test-multi.js && rm -rf testDB* && mocha bin/test-single.js && rm -rf testDB*",
-    "test-single": "tsc && rm -rf testDB* && mocha bin/test-single.js && rm -rf testDB*"
+    "build": "rm -rf bin && mkdir -p bin && tsc && node scripts/write-esm-wrapper.cjs",
+    "test": "npm run build && rm -rf testDB* && vitest run --pool=threads bin/tests/multi.test.js && rm -rf testDB* && vitest run --pool=threads bin/tests/single.test.js && rm -rf testDB*",
+    "test-multi": "npm run build && rm -rf testDB* && vitest run --pool=threads bin/tests/multi.test.js && rm -rf testDB*",
+    "test-single": "npm run build && rm -rf testDB* && vitest run --pool=threads bin/tests/single.test.js && rm -rf testDB*",
+    "test:coverage": "rm -rf coverage .nyc_output && c8 --reporter=text --reporter=lcov npm test"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ClickSimply/snap-db.git"
+    "url": "git+https://github.com/only-cliches/snap-db.git"
   },
   "keywords": [
-    "key-value",
-    "no-sql",
+    "acid",
+    "atomic",
+    "bloom-filter",
     "database",
-    "bloom",
+    "durable",
+    "electron",
+    "embedded-database",
+    "key-value",
+    "kv-store",
+    "leveldb-compatible",
+    "log-structured-merge-tree",
     "lsm",
-    "leveldb",
-    "level",
-    "rocksdb",
-    "rocks",
     "lsm-tree",
-    "lsm tree",
-    "log structure merge tree",
-    "db",
-    "data-store",
-    "memcache",
-    "memorycache",
-    "sqlite"
+    "nodejs",
+    "nosql",
+    "ordered-map",
+    "persistent-storage",
+    "rocksdb-compatible",
+    "snapdb",
+    "sstable",
+    "transaction",
+    "typescript"
   ],
   "author": "Scott Lott <Scott@ClickSimply.com>",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/ClickSimply/snap-db/issues"
+    "url": "https://github.com/only-cliches/snap-db/issues"
   },
-  "homepage": "https://github.com/ClickSimply/snap-db#readme",
+  "homepage": "https://github.com/only-cliches/snap-db#readme",
   "devDependencies": {
-    "@types/chai": "^4.1.7",
-    "@types/mocha": "^5.2.6",
-    "@types/node": "^12.0.0",
-    "chai": "^4.2.0",
-    "mocha": "^6.1.4",
-    "typescript": "^3.4.5"
+    "@types/node": "^24.5.2",
+    "c8": "^10.1.3",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   },
   "dependencies": {}
 }

@@ -1,5 +1,5 @@
-import { runTests } from "./test";
-import { SnapDB } from ".";
+import { runTests } from "./run-tests";
+import { SnapDB } from "../src";
 
 const db_str1 = () => new SnapDB<string>({ dir: "testDB1", key: "string", mainThread: false });
 const db_int1 = () => new SnapDB<number>({ dir: "testDB2", key: "int", mainThread: false });

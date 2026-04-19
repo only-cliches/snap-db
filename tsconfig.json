@@ -11,18 +11,15 @@
         "declarationDir": "bin",
         "noImplicitReturns": true,
         "noImplicitThis": true,
-        "noImplicitUseStrict": true,
         "sourceMap": true,
+        "skipLibCheck": true,
+        "types": ["node", "vitest/globals"],
         "lib": ["dom", "es2015", "es5"],
         "outDir":"bin",
     },
     "include": [
-        "src/index.ts",
-        "src/database.ts",
-        "src/test-single.ts",
-        "src/test-multi.ts",
-        "src/compact.ts",
-        "src/lib_bloom.ts"
+        "src/**/*.ts",
+        "tests/**/*.ts"
     ],
     "exclude": [
         "node_modules"

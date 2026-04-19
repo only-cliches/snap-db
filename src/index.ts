@@ -7,7 +7,7 @@ import { SnapDatabase } from "./database";
 import * as stream from "stream";
 
 const messageBuffer: {
-    [messageId: string]: (values: string[]) => void;
+    [messageId: string]: (values: any[]) => void;
 } = {};
 
 export interface SnapEvent {
@@ -46,7 +46,7 @@ export class SnapDB<K> {
      * @type {("string" | "float" | "int" | "any")}
      * @memberof SnapDB
      */
-    public keyType: "string" | "float" | "int" | "any";
+    public keyType: "string" | "float" | "int" | "any" | "buffer";
 
     /**
      * `true` if the in memory cache is enabled, `false` otherwise.
@@ -80,7 +80,7 @@ export class SnapDB<K> {
      *Creates an instance of SnapDB.
      * @param {({
      *         dir: string,
-     *         key: "string" | "float" | "int" | "any",
+     *         key: "string" | "float" | "int" | "any" | "buffer",
      *         cache?: boolean,
      *         autoFlush?: number|boolean,
      *         singleThread?: boolean
@@ -89,11 +89,11 @@ export class SnapDB<K> {
      */
     constructor(args: {
         dir: string,
-        key?: "string" | "float" | "int" | "any",
+        key?: "string" | "float" | "int" | "any" | "buffer",
         cache?: boolean,
         autoFlush?: number | boolean,
         mainThread?: boolean
-    } | string, keyType?: "string" | "float" | "int" | "any", cache?: boolean) {
+    } | string, keyType?: "string" | "float" | "int" | "any" | "buffer", cache?: boolean) {
 
         this._autoFlush = true;
         this._onCompactorMessage = this._onCompactorMessage.bind(this);
@@ -122,7 +122,7 @@ export class SnapDB<K> {
 
         if (this._worker) { // multi threaded mode
 
-            this._worker.on("message", (msg) => { // got message from worker
+            this._worker.on("message", (msg: any) => { // got message from worker
                 switch (msg.type) {
                     case "snap-ready":
                         this._isReady = true;
@@ -149,6 +149,9 @@ export class SnapDB<K> {
                             this.isTx = true;
                         }
                         if (msg.event === "tx-end") {
+                            this.isTx = false;
+                        }
+                        if (msg.event === "tx-abort") {
                             this.isTx = false;
                         }
                         messageBuffer[msg.id].apply(null, [msg.data]);
@@ -239,8 +242,9 @@ export class SnapDB<K> {
             if (this._worker) {
                 this._worker.send({ type: "do-compact" });
             } else {
-                this._database.maybeFlushLog(true);
-                this._compactor.send("do-compact");
+                this._database.maybeFlushLog(true, () => {
+                    this._compactor.send("do-compact");
+                });
             }
 
             const checkDone = () => {
@@ -306,9 +310,9 @@ export class SnapDB<K> {
      * @returns {Promise<string>}
      * @memberof SnapDB
      */
-    public get(key: K, callback?:(err: any, value?: string) => void ): Promise<string | undefined> {
+    public get(key: K, callback?:(err: any, value?: string | Buffer) => void ): Promise<string | Buffer | undefined> {
 
-        const getKey = this.keyType === "any" ? this._anyKey(key) : key;
+        const getKey = this._normalizeKey(key);
 
         return this._doWhenReady((res, rej) => {
             if (this._worker) {
@@ -317,9 +321,9 @@ export class SnapDB<K> {
                     if (data[0]) {
                         rej(data[0]);
                     } else {
-                        res(data[1] === null ? undefined : data[1]);
+                        res(data[1] === null ? undefined : this._normalizeIPCBuffer(data[1]));
                     }
-                    if (callback) callback(data[0], data[1] === null ? undefined : data[1]);
+                    if (callback) callback(data[0], data[1] === null ? undefined : this._normalizeIPCBuffer(data[1]));
                 })
 
                 this._worker.send({ type: "snap-get", key: getKey, id: msgId });
@@ -327,8 +331,8 @@ export class SnapDB<K> {
 
                 try {
                     const data = this._database.get(getKey);
-                    res(data === null ? undefined : data);
-                    if (callback) callback(undefined, data === null ? undefined : data);
+                    res(data === null ? undefined : this._normalizeIPCBuffer(data));
+                    if (callback) callback(undefined, data === null ? undefined : this._normalizeIPCBuffer(data));
                     if (this._hasEvents) this._rse.trigger("get", { target: this, tx: rand(), time: Date.now(), data: data });
                 } catch (e) {
                     rej(e);
@@ -351,7 +355,7 @@ export class SnapDB<K> {
             if (callback) callback("Write Error: Key can't be null or undefined!");
             return Promise.reject("Write Error: Key can't be null or undefined!");
         }
-        const getKey = this.keyType === "any" ? this._anyKey(key) : key;
+        const getKey = this._normalizeKey(key);
         return this._doWhenReady((res, rej) => {
             if (this._worker) {
                 const msgId = this._msgID((data) => {
@@ -400,24 +404,19 @@ export class SnapDB<K> {
      * @returns {Promise<any>}
      * @memberof SnapDB
      */
-    public put(key: K, data: string, callback?: (err: any, response: any) => void): Promise<any> {
+    public put(key: K, data: string | Buffer, callback?: (err: any, response: any) => void): Promise<any> {
         if (key === null || key === undefined) {
             if (callback) callback("Write Error: Key can't be null or undefined!", undefined);
             return Promise.reject("Write Error: Key can't be null or undefined!");
         }
 
-        if (data === null || data === undefined || typeof data !== "string") {
-            if (callback) callback("Write Error: Data must be a string!", undefined);
-            return Promise.reject("Write Error: Data must be a string!");
+        if (data === null || data === undefined || (typeof data !== "string" && !Buffer.isBuffer(data))) {
+            if (callback) callback("Write Error: Data must be a string or Buffer!", undefined);
+            return Promise.reject("Write Error: Data must be a string or Buffer!");
         }
 
-        const parseKey = {
-            "string": (k) => String(k),
-            "float": (k) => isNaN(k) || k === null ? 0 : parseFloat(k),
-            "int": (k) => isNaN(k) || k === null ? 0 : parseInt(k)
-        };
-
         return this._doWhenReady((res, rej) => {
+            const parsedKey = this._normalizeKey(key);
             if (this._worker) {
                 const msgId = this._msgID((data: any[]) => {
                     if (data[0]) {
@@ -428,11 +427,11 @@ export class SnapDB<K> {
                     if (callback) callback(data[0], data[1]);
                 })
 
-                this._worker.send({ type: "snap-put", key: this.keyType === "any" ? this._anyKey(key) : parseKey[this.keyType](key), value: data, id: msgId });
+                this._worker.send({ type: "snap-put", key: parsedKey, value: data, id: msgId });
             } else {
                 const msgId = rand();
                 try {
-                    const put = this._database.put(this.keyType === "any" ? this._anyKey(key) : parseKey[this.keyType](key), data);
+                    const put = this._database.put(parsedKey, data);
                     res(put);
                     if (callback) callback(undefined, put);
                     if (this._hasEvents) this._rse.trigger("put", { target: this, tx: msgId, time: Date.now(), data: put });
@@ -450,17 +449,19 @@ export class SnapDB<K> {
     /**
      * API compatible version of batch query from LevelDB.
      *
-     * @param {({type: "del"|"put", key: K, value?: string}[])} [ops]
+     * @param {({type: "del"|"put", key: K, value?: string|Buffer}[])} [ops]
      * @param {(error: any) => void} [callback]
      * @returns {*}
      * @memberof SnapDB
      */
-    public batch(ops?: {type: "del"|"put", key: K, value?: string}[], callback?: (error: any) => void): any {
+    public batch(ops?: {type: "del"|"put", key: K, value?: string | Buffer}[], callback?: (error: any) => void): any {
         if (ops) {
             return new Promise((res, rej) => {
                 const run = async () => {
+                    let txStarted = false;
                     try {
                         await this.startTx();
+                        txStarted = true;
                         for (const action of ops) {
                             switch(action.type) {
                                 case "del":
@@ -472,9 +473,17 @@ export class SnapDB<K> {
                             }
                         }
                         await this.endTx();
+                        txStarted = false;
                         if (callback) callback(undefined);
-                        res();
+                        res(undefined);
                     } catch(e) {
+                        if (txStarted) {
+                            try {
+                                await this.abortTx();
+                            } catch (abortError) {
+                                // Preserve original error from the batch operation.
+                            }
+                        }
                         if (callback) callback(e);
                         rej(e);
                     }
@@ -490,7 +499,7 @@ export class SnapDB<K> {
                 check();
             })
         } else {
-            let ops: {type: "del"|"put", key: K, value?: string}[] = [];
+            let ops: {type: "del"|"put", key: K, value?: string | Buffer}[] = [];
             const chain = {
                 length: 0,
                 write: (callback?: (err: any) => void) => {
@@ -501,7 +510,7 @@ export class SnapDB<K> {
                     chain.length = ops.length;
                     return chain;
                 },
-                put: (key: K, value: string) => {
+                put: (key: K, value: string | Buffer) => {
                     ops.push({type: "put", key: key, value: value});
                     chain.length = ops.length;
                     return chain;
@@ -517,7 +526,7 @@ export class SnapDB<K> {
     }
 
     private _levelResultMutate(args: QueryArgs<K>) {
-        return (key?: K, value?: string) => {
+        return (key?: K, value?: string | Buffer) => {
             if (args.values === false && args.keys === false) return {};
             if (args.values === false) return key;
             if (args.keys === false) return value;
@@ -638,12 +647,12 @@ export class SnapDB<K> {
     /**
      * Get all keys and values from the store in order, or optionally in reverse order.
      *
-     * @param {(key: K, data: string) => void} onRecord
+     * @param {(key: K, data: string|Buffer) => void} onRecord
      * @param {(err?: any) => void} onComplete
      * @param {boolean} [reverse]
      * @memberof SnapDB
      */
-    public getAll(onRecord: (key: K, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean) {
+    public getAll(onRecord: (key: K, data: string | Buffer) => void, onComplete: (err?: any) => void, reverse?: boolean) {
         this._standardKeysAndValues({ reverse: reverse }, "get-all", "get-all-end", onRecord, onComplete);
     }
 
@@ -651,10 +660,10 @@ export class SnapDB<K> {
      * Get all keys and values from the store in order, or optionally in reverse order.
      *
      * @param {boolean} [reverse]
-     * @returns {Promise<AsyncIterableIterator<[K, string]>>}
+     * @returns {Promise<AsyncIterableIterator<[K, string|Buffer]>>}
      * @memberof SnapDB
      */
-    public getAllIt(reverse?: boolean): Promise<AsyncIterableIterator<[K, string]>> {
+    public getAllIt(reverse?: boolean): Promise<AsyncIterableIterator<[K, string | Buffer]>> {
         return this._iterateKeysAndValues({ reverse: reverse }, "get-all", "get-all-end");
     }
 
@@ -674,12 +683,12 @@ export class SnapDB<K> {
      *
      * @param {K} lower
      * @param {K} higher
-     * @param {(key: K, data: string) => void} onRecord
+     * @param {(key: K, data: string|Buffer) => void} onRecord
      * @param {(err?: any) => void} onComplete
      * @param {boolean} [reverse]
      * @memberof SnapDB
      */
-    public range(lower: K, higher: K, onRecord: (key: K, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean) {
+    public range(lower: K, higher: K, onRecord: (key: K, data: string | Buffer) => void, onComplete: (err?: any) => void, reverse?: boolean) {
         this._standardKeysAndValues(reverse ? { lte: higher, gt: lower, reverse: true } : { lt: higher, gte: lower }, "get-range", "get-range-end", onRecord, onComplete);
     }
 
@@ -687,10 +696,10 @@ export class SnapDB<K> {
      * Gets the keys and values between a given range, inclusive.  Optionally get the range in reverse order.
      *
      * @param {boolean} [reverse]
-     * @returns {Promise<AsyncIterableIterator<[K, string]>>}
+     * @returns {Promise<AsyncIterableIterator<[K, string|Buffer]>>}
      * @memberof SnapDB
      */
-    public rangeIt(lower: K, higher: K, reverse?: boolean): Promise<AsyncIterableIterator<[K, string]>> {
+    public rangeIt(lower: K, higher: K, reverse?: boolean): Promise<AsyncIterableIterator<[K, string | Buffer]>> {
         return this._iterateKeysAndValues(reverse ? { lte: higher, gt: lower, reverse: true } : { lt: higher, gte: lower }, "get-range", "get-range-end");
     }
 
@@ -712,12 +721,12 @@ export class SnapDB<K> {
      * 
      * @param {number} offset
      * @param {number} limit
-     * @param {(key: K, data: string) => void} onRecord
+     * @param {(key: K, data: string|Buffer) => void} onRecord
      * @param {(err?: any) => void} onComplete
      * @param {boolean} [reverse]
      * @memberof SnapDB
      */
-    public offset(offset: number, limit: number, onRecord: (key: K, data: string) => void, onComplete: (err?: any) => void, reverse?: boolean) {
+    public offset(offset: number, limit: number, onRecord: (key: K, data: string | Buffer) => void, onComplete: (err?: any) => void, reverse?: boolean) {
         this._standardKeysAndValues({ offset: offset, limit: limit, reverse: reverse }, "get-offset", "get-offset-end", onRecord, onComplete);
     }
 
@@ -725,10 +734,10 @@ export class SnapDB<K> {
      * Get a collection of values from the keys at the given offset/limit. Optionally get the results from the end of the key set.
      *
      * @param {boolean} [reverse]
-     * @returns {Promise<AsyncIterableIterator<[K, string]>>}
+     * @returns {Promise<AsyncIterableIterator<[K, string|Buffer]>>}
      * @memberof SnapDB
      */
-    public offsetIt(offset: number, limit: number, reverse?: boolean): Promise<AsyncIterableIterator<[K, string]>> {
+    public offsetIt(offset: number, limit: number, reverse?: boolean): Promise<AsyncIterableIterator<[K, string | Buffer]>> {
         return this._iterateKeysAndValues({ offset: offset, limit: limit, reverse: reverse }, "get-offset", "get-offset-end");
     }
 
@@ -749,11 +758,11 @@ export class SnapDB<K> {
      * Standard query for data
      *
      * @param {QueryArgs<K>} args
-     * @param {((key: K, data: string|undefined) => void)} onRecord
+     * @param {((key: K, data: string|Buffer|undefined) => void)} onRecord
      * @param {(err?: any) => void} onComplete
      * @memberof SnapDB
      */
-    public query(args: QueryArgs<K>, onRecord: (key: K, data: string | undefined) => void, onComplete: (err?: any) => void) {
+    public query(args: QueryArgs<K>, onRecord: (key: K, data: string | Buffer | undefined) => void, onComplete: (err?: any) => void) {
         this._standardKeysAndValues(args, "get-query", "get-query-end", onRecord, onComplete);
     }
 
@@ -761,10 +770,10 @@ export class SnapDB<K> {
      * Get a collection of values from the keys at the given offset/limit. Optionally get the results from the end of the key set.
      *
      * @param {boolean} [reverse]
-     * @returns {Promise<AsyncIterableIterator<[K, string]>>}
+     * @returns {Promise<AsyncIterableIterator<[K, string|Buffer]>>}
      * @memberof SnapDB
      */
-    public queryIt(args: QueryArgs<K>): Promise<AsyncIterableIterator<[K, string]>> {
+    public queryIt(args: QueryArgs<K>): Promise<AsyncIterableIterator<[K, string | Buffer]>> {
         return this._iterateKeysAndValues(args, "get-query", "get-query-end");
     }
 
@@ -788,7 +797,7 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     public exists(key: K, callback?: (err: any, exists?: boolean) => void): Promise<boolean> {
-        const getKey = this.keyType === "any" ? this._anyKey(key) : key;
+        const getKey = this._normalizeKey(key);
         return this._doWhenReady((res, rej) => {
             if (this._worker) {
 
@@ -831,7 +840,7 @@ export class SnapDB<K> {
                     if (data[0]) {
                         rej(data[0]);
                     } else {
-                        res();
+                        res(data[1]);
                     }
                     if (callback) callback(data[0], data[1]);
                 })
@@ -877,7 +886,7 @@ export class SnapDB<K> {
                     if (data[0]) {
                         rej(data[0]);
                     } else {
-                        res();
+                        res(data[1]);
                     }
                     if (callback) callback(data[0], data[1]);
                 })
@@ -911,6 +920,41 @@ export class SnapDB<K> {
     }
 
     /**
+     * Abort the current transaction, discarding uncommitted writes.
+     *
+     * @returns {Promise<any>}
+     * @memberof SnapDB
+     */
+    public abortTx(callback?: (err?: any, txNum?: number) => void): Promise<any> {
+        return this._doWhenReady((res, rej) => {
+            if (this._worker) {
+                const msgId = this._msgID((data) => {
+                    if (data[0]) {
+                        rej(data[0]);
+                    } else {
+                        res(data[1]);
+                    }
+                    if (callback) callback(data[0], data[1]);
+                });
+                this._worker.send({ type: "snap-abort-tx", id: msgId });
+            } else {
+                try {
+                    const currentTX = this._database.txNum;
+                    this._database.abortTX();
+                    this.isTx = false;
+                    if (callback) callback(undefined, currentTX);
+                    if (this._hasEvents) this._rse.trigger("tx-abort", { target: this, tx: currentTX, time: Date.now(), data: currentTX });
+                    res(currentTX);
+                } catch (e) {
+                    if (callback) callback(e);
+                    if (this._hasEvents) this._rse.trigger("tx-abort", { target: this, tx: this._database.txNum, time: Date.now(), error: e });
+                    rej(e);
+                }
+            }
+        });
+    }
+
+    /**
      * Closes database.  This isn't reversible, you must create a new SnapDB instance if you want to reconnect to this database without restarting your app.
      *
      * @returns {Promise<any>}
@@ -935,18 +979,25 @@ export class SnapDB<K> {
                         rej(data[0])
                     } else {
                         if (callback) callback();
-                        res();
+                        res(undefined);
                     }
                 })
                 this._worker.send({ type: "snap-close", id: msgId });
             } else {
 
                 try {
-                    this._isReady = false;
-                    this._compactor.kill();
-                    res(this._database.close());
-                    if (callback) callback();
-                    if (this._hasEvents) this._rse.trigger("close", { target: this, tx: rand(), time: Date.now() });
+                    this._database.waitForFlush(() => {
+                        try {
+                            this._isReady = false;
+                            this._compactor.kill();
+                            res(this._database.close());
+                            if (callback) callback();
+                            if (this._hasEvents) this._rse.trigger("close", { target: this, tx: rand(), time: Date.now() });
+                        } catch (inner) {
+                            if (callback) callback(inner);
+                            rej(inner);
+                        }
+                    });
                 } catch (e) {
                     if (callback) callback(e);
                     rej(e);
@@ -967,7 +1018,7 @@ export class SnapDB<K> {
         return new Promise((res, rej) => {
             if (!this._isReady) {
                 if (callback) callback(undefined);
-                res();
+                res(undefined);
                 return;
             }
             this._isReady = false;
@@ -980,7 +1031,7 @@ export class SnapDB<K> {
                     if (data[0]) {
                         rej(data[0])
                     } else {
-                        res();
+                        res(undefined);
                     }
                     if (callback) callback(data[0]);
                 })
@@ -994,6 +1045,7 @@ export class SnapDB<K> {
                 this._compactor.on("message", this._onCompactorMessage);
                 this._compactor.send({ type: "snap-compact", path: this._path, cache: this.memoryCache, keyType: this.keyType, autoFlush: this._autoFlush });
                 this._isReady = true;
+                res(undefined);
                 if (callback) callback(undefined);
                 if (this._hasEvents) this._rse.trigger("clear", { target: this, tx: msgId, time: Date.now() });
             }
@@ -1077,9 +1129,37 @@ export class SnapDB<K> {
      * @memberof SnapDB
      */
     private _anyKey(key: any): any {
+        if (Buffer.isBuffer(key)) return key;
+        if (key && typeof key === "object" && key.type === "Buffer" && Array.isArray(key.data)) {
+            return Buffer.from(key.data);
+        }
         const type = typeof key;
         if (type === "string" || type === "number") return key;
         return key !== undefined && key.toString && typeof key.toString === "function" ? key.toString() : String(key);
+    }
+
+    private _normalizeKey(key: any): any {
+        if (this.keyType === "any") return this._anyKey(key);
+        if (this.keyType === "buffer") return this._toBuffer(key);
+        if (this.keyType === "string") return String(key);
+        if (this.keyType === "int") return isNaN(key) || key === null ? 0 : parseInt(key);
+        if (this.keyType === "float") return isNaN(key) || key === null ? 0 : parseFloat(key);
+        return key;
+    }
+
+    private _toBuffer(value: any): Buffer {
+        if (Buffer.isBuffer(value)) return value;
+        if (value && typeof value === "object" && value.type === "Buffer" && Array.isArray(value.data)) {
+            return Buffer.from(value.data);
+        }
+        return Buffer.from(value);
+    }
+
+    private _normalizeIPCBuffer<T>(value: T): T {
+        if (value && typeof value === "object" && (value as any).type === "Buffer" && Array.isArray((value as any).data)) {
+            return Buffer.from((value as any).data) as any;
+        }
+        return value;
     }
 
     /**
@@ -1109,8 +1189,13 @@ export class SnapDB<K> {
         }
     }
 
-    private _streamKeysAndValues(args: QueryArgs<K>, progressEvent: string, doneEvent: string, mutateResult?: (key?: K, value?: string) => any): stream.Readable {
-        const s = new stream.Readable();
+    private _streamKeysAndValues(args: QueryArgs<K>, progressEvent: string, doneEvent: string, mutateResult?: (key?: K, value?: string | Buffer) => any): stream.Readable {
+        const s = new stream.Readable({
+            objectMode: true,
+            read() {
+                // Data is pushed asynchronously by query callbacks.
+            }
+        });
 
         this._standardKeysAndValues(args, progressEvent, doneEvent, (key, value) => {
             s.push(mutateResult ? mutateResult(key, value) : [key, value]);
@@ -1125,7 +1210,7 @@ export class SnapDB<K> {
         return s;
     }
 
-    private _standardKeysAndValues(args: QueryArgs<K>, progressEvent: string, doneEvent: string, onRecord: (key: K | undefined, data: string | undefined) => void, onComplete: (err?: any) => void) {
+    private _standardKeysAndValues(args: QueryArgs<K>, progressEvent: string, doneEvent: string, onRecord: (key: K | undefined, data: string | Buffer | undefined) => void, onComplete: (err?: any) => void) {
         this._doWhenReady(() => {
             let i = 0;
             const queryId = rand();
@@ -1137,15 +1222,16 @@ export class SnapDB<K> {
                                 onComplete();
                                 if (this._hasEvents) this._rse.trigger(doneEvent, { target: this, query: args, tx: queryId, time: Date.now(), error: undefined });
                             } else {
+                                const nextKey = this._normalizeIPCBuffer(value.key) as any;
                                 if (args.values === false) {
-                                    if (this._hasEvents) this._rse.trigger(progressEvent, { target: this, query: args, tx: queryId, time: Date.now(), data: { k: value.key, v: undefined } });
-                                    onRecord(args.keys === false ? undefined : value.key, undefined);
+                                    if (this._hasEvents) this._rse.trigger(progressEvent, { target: this, query: args, tx: queryId, time: Date.now(), data: { k: nextKey, v: undefined } });
+                                    onRecord(args.keys === false ? undefined : nextKey, undefined);
                                     i++;
                                     i % 250 ? setImmediate(nextRow) : nextRow();
                                 } else {
-                                    this.get(value.key).then((val) => {
-                                        onRecord(args.keys === false ? undefined : value.key, val);
-                                        if (this._hasEvents) this._rse.trigger(progressEvent, { target: this, query: args, tx: queryId, time: Date.now(), data: { k: value.key, v: val } });
+                                    this.get(nextKey).then((val) => {
+                                        onRecord(args.keys === false ? undefined : nextKey, val);
+                                        if (this._hasEvents) this._rse.trigger(progressEvent, { target: this, query: args, tx: queryId, time: Date.now(), data: { k: nextKey, v: val } });
                                         i++;
                                         i % 250 ? setImmediate(nextRow) : nextRow();
                                     }).catch((error) => {
@@ -1200,7 +1286,7 @@ export class SnapDB<K> {
      * @returns {Promise<AsyncIterableIterator<[K, string]>>}
      * @memberof SnapDB
      */
-    private _iterateKeysAndValues(args: QueryArgs<K>, progressEvent: string, doneEvent: string, keysOnly?: boolean): Promise<AsyncIterableIterator<[K, string]>> {
+    private _iterateKeysAndValues(args: QueryArgs<K>, progressEvent: string, doneEvent: string, keysOnly?: boolean): Promise<AsyncIterableIterator<[K, string | Buffer]>> {
         return this._doWhenReady((res, rej) => {
             const that = this;
             const loop = async function* () {
@@ -1208,12 +1294,14 @@ export class SnapDB<K> {
                     const id = await that._asyncNewIterator(args);
                     try {
                         let nextKey = await that._asyncNextIterator(id);
-                        let nextValue = nextKey.done || args.values === false ? undefined : await that.get(nextKey.key);
+                        let normalizedKey = nextKey.done ? undefined : that._normalizeIPCBuffer(nextKey.key);
+                        let nextValue = nextKey.done || args.values === false ? undefined : await that.get(normalizedKey as any);
                         while (!nextKey.done) {
-                            if (that._hasEvents) that._rse.trigger(progressEvent, { target: that, query: args, tx: id, time: Date.now(), data: { k: nextKey, v: nextValue } });
-                            yield keysOnly ? nextKey.key : [args.keys === false ? undefined : nextKey.key, nextValue];
+                            if (that._hasEvents) that._rse.trigger(progressEvent, { target: that, query: args, tx: id, time: Date.now(), data: { k: normalizedKey, v: nextValue } });
+                            yield keysOnly ? normalizedKey : [args.keys === false ? undefined : normalizedKey, nextValue];
                             nextKey = await that._asyncNextIterator(id);
-                            nextValue = nextKey.done || args.values === false ? undefined : await that.get(nextKey.key);
+                            normalizedKey = nextKey.done ? undefined : that._normalizeIPCBuffer(nextKey.key);
+                            nextValue = nextKey.done || args.values === false ? undefined : await that.get(normalizedKey as any);
                         }
                         await that._asyncClearIteator(id);
                         if (that._hasEvents) that._rse.trigger(doneEvent, { target: that, query: args, tx: id, time: Date.now(), error: undefined });

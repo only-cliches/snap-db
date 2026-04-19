@@ -2,7 +2,7 @@ const level = require('level');
 const rimraf = require("rimraf");
 const fs = require("fs");
 const path = require("path");
-const SnapDB = require("../bin/index.js").SnapDB;
+const SnapDB = require("../bin/src/index.js").SnapDB;
 const diskDB = require('diskdb');
 
 function makeid(length) {
@@ -115,7 +115,7 @@ const testSnapDB = (sampleData) => {
 // make 10,000 records for both databases
 
 let data = [];
-for (let i = 0; i < 10000; i++) {
+for (let i = 0; i < 100_000; i++) {
     data.push([makeid(10), makeid()]);
 }
 const average = (array) => Math.round(array.reduce((a, b) => a + b) / array.length);

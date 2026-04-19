@@ -1,19 +1,17 @@
 import * as fs from "fs";
 import * as path from "path";
-import { SnapManifest, writeManifestUpdate, fileName, VERSION, throttle, SnapIndex, NULLBYTE, tableGenerator, rand, QueryArgs } from "./common";
+import { SnapManifest, writeManifestUpdate, fileName, VERSION, throttle, SnapIndex, NULLBYTE, tableGenerator, rand, QueryArgs, compareKeys, keyInRange, encodeKey, decodeKey, encodeValue, decodeValue, isBufferLike, toBuffer } from "./common";
 import { BloomFilter, MurmurHash3, IbloomFilterObj } from "./lib_bloom";
 import { createRBTree, RedBlackTree, RedBlackTreeIterator } from "./lib_rbtree";
 
 const snapCompare = (a, b) => {
-    if (a === b) return 0;
-    if (typeof a === typeof b) return a > b ? 1 : -1;
-    return typeof a > typeof b ? 1 : -1;
+    return compareKeys(a, b);
 };
 
 export class SnapDatabase {
 
     private _cache: {
-        [key: string]: string;
+        [key: string]: string | Buffer;
     } = {};
 
     private _memTable: RedBlackTree = createRBTree(snapCompare);
@@ -31,6 +29,9 @@ export class SnapDatabase {
     private _doingTx: boolean = false;
 
     private _isCompacting: boolean = false;
+    private _isFlushing: boolean = false;
+    private _pendingForceFlush: boolean = false;
+    private _flushDoneCallbacks: (() => void)[] = [];
 
     private _isConnecting: boolean = false;
 
@@ -45,18 +46,19 @@ export class SnapDatabase {
     } = {};
 
     private _index: RedBlackTree = createRBTree(snapCompare);
+    private _txKeys: [any, number, number, number][] = [];
 
     private _maybeCacheClear = throttle(this, () => {
 
         // clear out cache that wasn't used more than 10 seconds ago
-        const deleteTime = Date.now() + 10000;
+        const deleteTime = Date.now() - 10000;
 
         const indexIDs = Object.keys(this._indexFileCache);
         let i = 0;
         while(i < indexIDs.length) {
             const fileNum = indexIDs[i];
             const cache: { cache: SnapIndex, lastUsed: number } = this._indexFileCache[fileNum];
-            if (cache.lastUsed > deleteTime) {
+            if (cache.lastUsed < deleteTime) {
                 delete this._indexFileCache[fileNum];
             }
             i++;
@@ -68,7 +70,7 @@ export class SnapDatabase {
         while(i < bloomIDs.length) {
             const fileNum = bloomIDs[i];
             const cache: { cache: IbloomFilterObj, lastUsed: number } = this._bloomCache[fileNum];
-            if (cache.lastUsed > deleteTime) {
+            if (cache.lastUsed < deleteTime) {
                 delete this._bloomCache[fileNum];
             }
             i++;
@@ -91,6 +93,25 @@ export class SnapDatabase {
         }
     }
 
+    private _normalizeManifestRanges() {
+        if (!this._manifestData || !this._manifestData.lvl) return;
+        let i = 0;
+        while (i < this._manifestData.lvl.length) {
+            const lvl = this._manifestData.lvl[i];
+            let k = 0;
+            while (k < lvl.files.length) {
+                if (isBufferLike(lvl.files[k].range[0])) {
+                    lvl.files[k].range[0] = toBuffer(lvl.files[k].range[0]);
+                }
+                if (isBufferLike(lvl.files[k].range[1])) {
+                    lvl.files[k].range[1] = toBuffer(lvl.files[k].range[1]);
+                }
+                k++;
+            }
+            i++;
+        }
+    }
+
     private _getFiles() {
 
         try {
@@ -110,6 +131,7 @@ export class SnapDatabase {
                     // either manifest.json is valid OR manifest-temp.json is valid
                     // so if this fails the main mainfest should be good to use.
                     this._manifestData = JSON.parse((fs.readFileSync(path.join(this._path, "manifest-temp.json")) || Buffer.from([])).toString("utf-8") || '{"inc": 0, "lvl": []}');
+                    this._normalizeManifestRanges();
 
                     // write to main manifest
                     fs.writeFileSync(path.join(this._path, "manifest.json"), JSON.stringify(this._manifestData));
@@ -123,6 +145,7 @@ export class SnapDatabase {
                     try {
                         // try to load main manifest file
                         this._manifestData = JSON.parse(fs.readFileSync(path.join(this._path, "manifest.json")).toString("utf-8"));
+                        this._normalizeManifestRanges();
                     } catch (e) {
                         console.error(e);
                         throw new Error("manifest.json is damaged or not found, unable to load database");
@@ -139,6 +162,7 @@ export class SnapDatabase {
                 try {
                     // try to load main manifest file
                     this._manifestData = JSON.parse(fs.readFileSync(path.join(this._path, "manifest.json")).toString("utf-8"));
+                    this._normalizeManifestRanges();
                 } catch (e) {
                     console.error(e);
                     throw new Error("manifest.json is damaged, unable to load database");
@@ -180,10 +204,11 @@ export class SnapDatabase {
     }
 
     public exists(key: any): boolean {
+        const encodedKey = encodeKey(this.keyType, key);
 
         // check cache first
         if (this.memoryCache) {
-            if (typeof this._cache[key] !== "undefined") {
+            if (typeof this._cache[encodedKey] !== "undefined") {
                 return true;
             } else {
                 return false;
@@ -207,11 +232,45 @@ export class SnapDatabase {
         return false;
     }
 
-    public delete(key: any) {
+    private _cacheValueFromLog(key: any, start: number, length: number) {
+        if (!this.memoryCache) {
+            return;
+        }
+        const buff = Buffer.alloc(length);
+        fs.readSync(this._logHandle, buff, 0, length, start);
+        this._cache[encodeKey(this.keyType, key)] = decodeValue(buff.toString("utf-8"), 0);
+    }
 
+    private _applyCommittedRow(key: any, start: number, length: number, valueType: number) {
+        const encodedKey = encodeKey(this.keyType, key);
         this._index = this._index.remove(key);
+        this._memTable = this._memTable.remove(key);
 
-        const keyStr = (this.keyType === "any" ? (typeof key === "number" ? "n>" : "s>") : "") + String(key);
+        if (start === -1) { // tombstone
+            this._memTable = this._memTable.insert(key, NULLBYTE);
+            delete this._cache[encodedKey];
+            return;
+        }
+
+        this._index = this._index.insert(key, NULLBYTE);
+        this._memTable = this._memTable.insert(key, { fileID: -1, offset: [start, length, valueType] });
+        if (this.memoryCache) {
+            const buff = Buffer.alloc(length);
+            fs.readSync(this._logHandle, buff, 0, length, start);
+            this._cache[encodedKey] = decodeValue(buff.toString("utf-8"), valueType);
+        }
+    }
+
+    private _applyTxKeys(txKeys: [any, number, number, number][]) {
+        let i = 0;
+        while (i < txKeys.length) {
+            this._applyCommittedRow(txKeys[i][0], txKeys[i][1], txKeys[i][2], txKeys[i][3] || 0);
+            i++;
+        }
+    }
+
+    public delete(key: any) {
+        const keyStr = encodeKey(this.keyType, key);
 
         const keyLen = keyStr.length;
         
@@ -225,45 +284,25 @@ export class SnapDatabase {
         fs.writeSync(this._logHandle, hash);
         this._memTableSize += tombStone.length + hash.length + 1;
 
-        // flush to disk
-        if (!this._doingTx) {
-            fs.fsyncSync(this._logHandle);
+        if (this._doingTx) {
+            this._txKeys.push([key, -1, 0, 0]);
+            return key;
         }
 
-        if (typeof this._memTable.get(key) !== "undefined") {
-            this._memTable = this._memTable.remove(key);
-        }
+        this._applyCommittedRow(key, -1, 0, 0);
+        fs.fsyncSync(this._logHandle);
 
-        this._memTable = this._memTable.insert(key, NULLBYTE);
-
-        delete this._cache[key];
-
-        if (!this._doingTx) this.maybeFlushLog();
+        this.maybeFlushLog();
         return key;
     }
 
-    public put(key: any, value: string) {
-
-        // if (typeof this._index.get(key) !== "undefined") {
-        //     this._index = this._index.remove(key)
-        // }
-
-        // write key to index
-        this._index = this._index.insert(key, NULLBYTE);
-
-        if (this.memoryCache) {
-            this._cache[key] = value;
-        }
-
-        const keyStr = (this.keyType === "any" ? (typeof key === "number" ? "n>" : "s>") : "") + String(key);
-        const valueStr = String(value);
-
-        // mark key in memtable
-        if (typeof this._memTable.get(key) !== "undefined") {
-            this._memTable = this._memTable.remove(key);
-        }
-
-        const meta = keyStr.length + "," + keyStr + "," + (this._memTableSize + 1) + "," + valueStr.length;
+    public put(key: any, value: string | Buffer) {
+        const keyStr = encodeKey(this.keyType, key);
+        const encodedValue = encodeValue(Buffer.isBuffer(value) ? value : String(value));
+        const valueStr = encodedValue.data;
+        const valueType = encodedValue.type;
+        const startOffset = this._memTableSize + 1;
+        const meta = keyStr.length + "," + keyStr + "," + startOffset + "," + valueStr.length + "," + valueType;
         const hash = "," + String(MurmurHash3(0, meta + valueStr));
 
         // write value to log
@@ -272,22 +311,19 @@ export class SnapDatabase {
         fs.writeSync(this._logHandle, ":" + meta);
         fs.writeSync(this._logHandle, hash);
 
-        this._memTable = this._memTable.insert(key, { fileID: -1, offset: [(this._memTableSize + 1), valueStr.length] });
-
         this._memTableSize++; // NULL
         this._memTableSize += valueStr.length;
         this._memTableSize += 1 + meta.length;
         this._memTableSize += hash.length;
 
-        if (this.memoryCache) {
-            this._cache[key] = value;
+        if (this._doingTx) {
+            this._txKeys.push([key, startOffset, valueStr.length, valueType]);
+            return;
         }
 
-        // flush to disk
-        if (!this._doingTx) {
-            fs.fsyncSync(this._logHandle);
-            this.maybeFlushLog();
-        }
+        this._applyCommittedRow(key, startOffset, valueStr.length, valueType);
+        fs.fsyncSync(this._logHandle);
+        this.maybeFlushLog();
     }
 
     private _getBloom(fileID: number) {
@@ -312,6 +348,7 @@ export class SnapDatabase {
         if (typeof index.keys[strKey] !== "undefined") { // bloom filter miss if undefined
             let dataStart = index.keys[strKey][0];
             let dataLength = index.keys[strKey][1];
+            let dataType = index.keys[strKey][2] || 0;
 
             // tombstone found
             if (dataStart === -1) { 
@@ -323,18 +360,19 @@ export class SnapDatabase {
             let buff = Buffer.alloc(dataLength);
             fs.readSync(fd, buff, 0, dataLength, dataStart);
             fs.closeSync(fd);
-            return {type: "data", data: buff.toString("utf-8")};
+            return {type: "data", data: decodeValue(buff.toString("utf-8"), dataType)};
         }
         return {type: "miss", data: undefined};
     }
 
-    public get(key: any, skipCache?: boolean): string | undefined {
+    public get(key: any, skipCache?: boolean): string | Buffer | undefined {
         this._maybeCacheClear();
+        const encodedKey = encodeKey(this.keyType, key);
 
         // check cache first
         if (this.memoryCache && !skipCache) {
-            if (typeof this._cache[key] !== "undefined") {
-                return this._cache[key];
+            if (typeof this._cache[encodedKey] !== "undefined") {
+                return this._cache[encodedKey];
             } else {
                 return undefined;
             }
@@ -351,7 +389,7 @@ export class SnapDatabase {
             }
             let buff = Buffer.alloc(memValue.offset[1]); // length/size
             fs.readSync(this._logHandle, buff, 0, memValue.offset[1], memValue.offset[0]);
-            return buff.toString("utf-8");
+            return decodeValue(buff.toString("utf-8"), memValue.offset[2] || 0);
         }
 
         // find latest key entry on disk
@@ -359,18 +397,16 @@ export class SnapDatabase {
         let i = 0;
         while (i < this._manifestData.lvl.length) { // go through each level, starting at level 0
             const lvl = this._manifestData.lvl[i];
-            let k = 0;
-            while (k < lvl.files.length) { // loop through all files in this level
+            let k = lvl.files.length;
+            while (k--) { // loop through all files in this level from newest to oldest
                 const fileInfo = lvl.files[k];
-                if (fileInfo.range[0] <= key && fileInfo.range[1] >= key) {
+                if (keyInRange(key, fileInfo.range[0], fileInfo.range[1])) {
                     const bloom = this._getBloom(fileInfo.i);
-                    const strKey = String(key);
-                    if (BloomFilter.contains(bloom.vData, bloom.nHashFuncs, bloom.nTweak, strKey)) {
-                        const value = this._maybeGetValue(strKey, fileInfo.i);
+                    if (BloomFilter.contains(bloom.vData, bloom.nHashFuncs, bloom.nTweak, encodedKey)) {
+                        const value = this._maybeGetValue(encodedKey, fileInfo.i);
                         if (value.type !== "miss") return value.data;
                     }
                 }
-                k++;
             }
             i++;
         }
@@ -378,61 +414,66 @@ export class SnapDatabase {
         return undefined;
     }
 
-    public maybeFlushLog(forceFlush?: boolean) {
+    public maybeFlushLog(forceFlush?: boolean, onDone?: () => void) {
         if (this._doingTx || this._isCompacting) {
+            if (onDone) onDone();
             return;
         }
 
         const OneMB = 1000000;
 
         if (this.autoFlush === false && !forceFlush) {
+            if (onDone) onDone();
             return;
         }
 
         const maxSize = typeof this.autoFlush === "boolean" ? 2 * OneMB : this.autoFlush * OneMB;
+        const shouldFlush = this._memTableSize > maxSize || forceFlush;
+
+        if (!shouldFlush) {
+            if (onDone) onDone();
+            return;
+        }
+
+        if (this._isFlushing) {
+            if (onDone) this._flushDoneCallbacks.push(onDone);
+            if (forceFlush) this._pendingForceFlush = true;
+            return;
+        }
+
+        this._isFlushing = true;
+        if (onDone) this._flushDoneCallbacks.push(onDone);
 
         // flush log & memtable
-        if (this._memTableSize > maxSize || forceFlush) {
+        tableGenerator(0, this._manifestData, this._path, this._memTable, this.keyType, () => {
+            // update manifest to disk
+            writeManifestUpdate(this._path, this._manifestData);
 
-            const level0Files = this._manifestData.lvl && this._manifestData.lvl.length ? this._manifestData.lvl[0].files.map(f => f.i) : [];
+            // empty memtable
+            this._memTable = createRBTree(snapCompare);
+            this._memTableSize = 0;
 
-            tableGenerator(0, this._manifestData, this._path, this._memTable, () => {
+            // empty logfile
+            fs.closeSync(this._logHandle);
+            try {
+                fs.unlinkSync(path.join(this._path, "LOG"));
+            } catch (e) {
 
-                // remove old level 0 files from manifest
-                this._manifestData.lvl[0].files = this._manifestData.lvl[0].files.filter((f) => {
-                    return level0Files.indexOf(f.i) === -1;
-                });
+            }
+            this._logHandle = fs.openSync(path.join(this._path, "LOG"), "a+");
 
-                // update manifest to disk
-                writeManifestUpdate(this._path, this._manifestData);
+            this._isFlushing = false;
+            const doneCallbacks = this._flushDoneCallbacks.splice(0, this._flushDoneCallbacks.length);
+            doneCallbacks.forEach((cb) => cb());
 
-                // empty memtable
-                this._memTable = createRBTree(snapCompare);
-                this._memTableSize = 0;
+            if (this._pendingForceFlush) {
+                this._pendingForceFlush = false;
+                this.maybeFlushLog(true);
+                return;
+            }
 
-                // empty logfile
-                fs.closeSync(this._logHandle);
-                try {
-                    fs.unlinkSync(path.join(this._path, "LOG"));
-                } catch (e) {
-
-                }
-                this._logHandle = fs.openSync(path.join(this._path, "LOG"), "a+");
-
-                // delete old level files
-                level0Files.forEach((fileID) => {
-                    try {
-                        fs.unlinkSync(path.join(this._path, fileName(fileID) + ".dta"));
-                        fs.unlinkSync(path.join(this._path, fileName(fileID) + ".idx"));
-                        fs.unlinkSync(path.join(this._path, fileName(fileID) + ".bom"));
-                    } catch (e) {
-                        // no error if the delete fails, doesn't matter
-                    }
-                });
-
-                this._maybeCompact();
-            });
-        }
+            this._maybeCompact();
+        });
     }
 
     private _maybeCompact() {
@@ -441,6 +482,9 @@ export class SnapDatabase {
     }
 
     public startTX() {
+        if (this._doingTx) {
+            throw new Error("Can't do nested transactions, finish the current one first!");
+        }
         let newTXNum = 0;
         while (newTXNum === 0 || newTXNum === this.txNum) {
             newTXNum = Math.round(Math.random() * 256);
@@ -453,6 +497,7 @@ export class SnapDatabase {
         fs.writeSync(this._logHandle, startTX);
         this._memTableSize += startTX.length;
 
+        this._txKeys = [];
         this._doingTx = true;
     }
 
@@ -465,15 +510,37 @@ export class SnapDatabase {
         this._memTableSize += endTX.length;
 
         fs.fsyncSync(this._logHandle);
+        this._applyTxKeys(this._txKeys);
 
+        this._txKeys = [];
         this._doingTx = false;
 
+        this.maybeFlushLog();
+    }
+
+    public abortTX() {
+        if (!this._doingTx) {
+            return;
+        }
+
+        fs.writeSync(this._logHandle, NULLBYTE);
+        this._memTableSize++;
+
+        const abortTX = "TX-ABORT-" + this.txNum;
+        fs.writeSync(this._logHandle, abortTX);
+        this._memTableSize += abortTX.length;
+
+        fs.fsyncSync(this._logHandle);
+
+        this._txKeys = [];
+        this._doingTx = false;
         this.maybeFlushLog();
     }
 
     public compactDone() {
         this._isCompacting = false;
         this._manifestData = JSON.parse((fs.readFileSync(path.join(this._path, "manifest.json")) || Buffer.from([])).toString("utf-8"));
+        this._normalizeManifestRanges();
         this._bloomCache = {};
         this._indexFileCache = {};
     }
@@ -486,12 +553,28 @@ export class SnapDatabase {
         // clear index
         this._index = createRBTree(snapCompare);
         this._memTable = createRBTree(snapCompare);
+        this._txKeys = [];
+        this._doingTx = false;
+        this._isFlushing = false;
+        this._pendingForceFlush = false;
+        this._flushDoneCallbacks = [];
 
         // close log file
         fs.closeSync(this._logHandle);
 
         this._bloomCache = {};
         this._indexFileCache = {};
+    }
+
+    public waitForFlush(onDone: () => void) {
+        const check = () => {
+            if (!this._isFlushing) {
+                onDone();
+                return;
+            }
+            setTimeout(check, 10);
+        };
+        check();
     }
 
     public clear() {
@@ -518,6 +601,10 @@ export class SnapDatabase {
         this._getFiles();
         this._isCompacting = false;
         this._doingTx = false;
+        this._txKeys = [];
+        this._isFlushing = false;
+        this._pendingForceFlush = false;
+        this._flushDoneCallbacks = [];
     }
 
     public iterators: {
@@ -584,11 +671,27 @@ export class SnapDatabase {
 
     }
 
+    private _normalizeIPCValue(value: any): any {
+        if (isBufferLike(value)) {
+            return toBuffer(value);
+        }
+        return value;
+    }
+
+    private _normalizeIPCQueryArgs(args: QueryArgs<any>): QueryArgs<any> {
+        if (!args) return args;
+        const normalized: QueryArgs<any> = { ...args };
+        if (isBufferLike((normalized as any).gt)) (normalized as any).gt = toBuffer((normalized as any).gt);
+        if (isBufferLike((normalized as any).gte)) (normalized as any).gte = toBuffer((normalized as any).gte);
+        if (isBufferLike((normalized as any).lt)) (normalized as any).lt = toBuffer((normalized as any).lt);
+        if (isBufferLike((normalized as any).lte)) (normalized as any).lte = toBuffer((normalized as any).lte);
+        return normalized;
+    }
 
     private _listenForCommands() {
 
-        process.on('message', (msg) => { // got message from master
-            const key = msg.key;
+        process.on('message', (msg: any) => { // got message from master
+            const key = this._normalizeIPCValue(msg.key);
             const msgId = msg.id;
             switch (msg.type) {
                 case "compact-done":
@@ -605,7 +708,7 @@ export class SnapDatabase {
                     break;
                 case "snap-new-iterator":
                     try {
-                        if (process.send) process.send({ type: "snap-res-done", id: msgId, data: [undefined, this.newIterator(msg.args[0])] })
+                        if (process.send) process.send({ type: "snap-res-done", id: msgId, data: [undefined, this.newIterator(this._normalizeIPCQueryArgs(msg.args[0]))] })
                     } catch (e) {
                         if (process.send) process.send({ type: "snap-res-done", id: msgId, data: ["Failed to make iterator!", ""] })
                     }
@@ -649,7 +752,7 @@ export class SnapDatabase {
                     break;
                 case "snap-put":
                     try {
-                        this.put(key, msg.value);
+                        this.put(key, this._normalizeIPCValue(msg.value));
                         if (process.send) process.send({ type: "snap-res-done", id: msgId, event: "put", data: [undefined, true] });
                     } catch (e) {
                         console.error(e);
@@ -671,13 +774,21 @@ export class SnapDatabase {
                     this.endTX();
                     if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "tx-end", data: [undefined, this.txNum] });
                     break;
+                case "snap-abort-tx":
+                    this.abortTX();
+                    if (process.send) process.send({ type: "snap-res-done", id: msg.id, event: "tx-abort", data: [undefined, this.txNum] });
+                    break;
                 case "snap-close":
-                    this.close();
-                    if (process.send) process.send({ type: "snap-close-done", id: msg.id, data: [undefined] })
+                    this.waitForFlush(() => {
+                        this.close();
+                        if (process.send) process.send({ type: "snap-close-done", id: msg.id, data: [undefined] })
+                    });
                     break;
                 case "snap-clear":
-                    this.clear();
-                    if (process.send) process.send({ type: "snap-clear-done", id: msg.id, data: [] })
+                    this.waitForFlush(() => {
+                        this.clear();
+                        if (process.send) process.send({ type: "snap-clear-done", id: msg.id, data: [] })
+                    });
                     break;
             }
         });
@@ -703,7 +814,10 @@ export class SnapDatabase {
         const it = this._index.begin();
 
         while (it.hasNext()) {
-            this._cache[it.key()] = this.get(it.key(), true) || "";
+            const cacheValue = this.get(it.key(), true);
+            if (cacheValue !== undefined) {
+                this._cache[encodeKey(this.keyType, it.key())] = cacheValue;
+            }
             it.next();
         }
     }
@@ -734,7 +848,7 @@ export class SnapDatabase {
 
             let buffer: string = "";
             let tx: number = -1;
-            let txKeys: [any, number, number][] = [];
+            let txKeys: [any, number, number, number][] = [];
 
             const processLog = (line: string) => {
                 if (!line || !line.length) return;
@@ -744,22 +858,15 @@ export class SnapDatabase {
                     txKeys = [];
                 } else if (line.indexOf("TX-END") === 0) { // end of transaction
                     if (parseInt(line.replace("TX-END-", "")) === tx) {
-                        let j = 0; // commit transaction to memtable
-
-                        while (j < txKeys.length) {
-                            this._index = this._index.remove(txKeys[j][0]);
-                            this._memTable = this._memTable.remove(txKeys[j][0]);
-                            if (txKeys[j][1] === -1) { // tombstone
-                                this._memTable = this._memTable.insert(txKeys[j][0], NULLBYTE);
-                            } else {
-                                this._index = this._index.insert(txKeys[j][0], NULLBYTE);
-                                this._memTable = this._memTable.insert(txKeys[j][0], { fileID: -1, offset: [txKeys[j][1], txKeys[j][2]] });
-                            }
-                            j++;
-                        }
+                        this._applyTxKeys(txKeys);
                     }
                     tx = -1;
                     txKeys = [];
+                } else if (line.indexOf("TX-ABORT") === 0) {
+                    if (parseInt(line.replace("TX-ABORT-", "")) === tx) {
+                        tx = -1;
+                        txKeys = [];
+                    }
                 } else { // normal line
                     let k = line.length;
                     let keyData: string = "";
@@ -798,29 +905,29 @@ export class SnapDatabase {
                     }
                     ptr += keyLength + 1;
 
-                    let parsedKey = this.keyType === "any" ? (key.slice(0, 2) === "n>" ? parseFloat(key.slice(2)) : key.slice(2)) : (this.keyType === "string" ? key : parseFloat(key));
+                    let parsedKey = decodeKey(this.keyType, key);
                     let parsedValueData = keyData.substr(ptr).split(",").map(s => parseInt(s));
-
-                    this._memTable = this._memTable.remove(parsedKey);
-                    this._index = this._index.remove(parsedKey);
 
                     if (parsedValueData[0] === -1) { // tombstone
                         if (tx !== -1) {
-                            txKeys.push([parsedKey, -1, 0]);
+                            txKeys.push([parsedKey, -1, 0, 0]);
                         } else {
-                            this._memTable = this._memTable.insert(parsedKey, NULLBYTE);
+                            this._applyCommittedRow(parsedKey, -1, 0, 0);
                         }
                     } else { // value
                         const start = parsedValueData[0];
                         const length = parsedValueData[1];
-                        const hash = parsedValueData[2];
+                        const valueType = parsedValueData.length >= 4 ? parsedValueData[2] : 0;
+                        const hash = parsedValueData.length >= 4 ? parsedValueData[3] : parsedValueData[2];
+                        const logMeta = parsedValueData.length >= 4
+                            ? (keyLength + "," + key + "," + start + "," + length + "," + valueType)
+                            : (keyLength + "," + key + "," + start + "," + length);
 
-                        if (hash === MurmurHash3(0, keyLength + "," + key + "," + start + "," + length + line.substr(0, valueBreak))) {
-                            this._index = this._index.insert(parsedKey, NULLBYTE);
+                        if (hash === MurmurHash3(0, logMeta + line.substr(0, valueBreak))) {
                             if (tx !== -1) {
-                                txKeys.push([parsedKey, start, length]);
+                                txKeys.push([parsedKey, start, length, valueType]);
                             } else {
-                                this._memTable = this._memTable.insert(parsedKey, { fileID: -1, offset: [start, length] });
+                                this._applyCommittedRow(parsedKey, start, length, valueType);
                             }
                         } else {
                             console.error(`Error validating key "${parsedKey}", value not imported from log!`);
@@ -852,14 +959,6 @@ export class SnapDatabase {
 
                 this._isConnecting = true;
                 this._memTableSize = size;
-
-                // purge keys that are in an incomplete transaction
-                if (tx !== -1) {
-                    let i = txKeys.length;
-                    while (i--) {
-                        this._memTable = this._memTable.remove(txKeys[i]);
-                    }
-                }
 
                 // load cache if it's enabled
                 this._loadCache();
@@ -1032,39 +1131,59 @@ export class SnapDatabase {
     }
 
     private _readIndexFiles() {
-        fs.readdir(this._path, (err, filenames) => {
-            if (err) {
-                throw err;
+        const seen: { [encodedKey: string]: boolean } = {};
+
+        const applyIndexContent = (content: string) => {
+            if (!content || !content.length) {
+                return;
             }
-            filenames.sort((a, b) => a > b ? 1 : -1).forEach((filename) => {
-                if (filename.indexOf(".idx") !== -1) {
-                    fs.readFile(path.join(this._path, filename), 'utf-8', (err, content) => {
-                        if (err) {
-                            throw err;
-                        }
-                        if (content && content.length) {
-                            const index: SnapIndex = JSON.parse(content);
-                            const keys = Object.keys(index.keys);
-                            let i = keys.length;
-                            while (i--) {
-                                const key = this.keyType === "any" ? (keys[i].slice(0, 2) === "n>" ? parseFloat(keys[i].slice(2)) : keys[i].slice(2)) : (this.keyType === "string" ? keys[i] : parseFloat(keys[i]));
-                                if (index.keys[keys[i]][0] === -1) { // delete
-                                    this._index = this._index.remove(key);
-                                } else { // add
-                                    this._index = this._index.insert(key, "");
-                                }
-                            }
-                        }
-                    });
+            const index: SnapIndex = JSON.parse(content);
+            const keys = Object.keys(index.keys);
+            let i = keys.length;
+            while (i--) {
+                const encodedKey = keys[i];
+                if (seen[encodedKey]) {
+                    continue;
                 }
-            });
+                seen[encodedKey] = true;
+                if (index.keys[encodedKey][0] !== -1) { // visible value
+                    const key = decodeKey(this.keyType, encodedKey);
+                    this._index = this._index.insert(key, "");
+                }
+            }
+        };
+
+        // Rebuild visibility from the same precedence used by `get()`:
+        // level 0 -> higher levels, and newest file -> oldest within each level.
+        if (this._manifestData.lvl && this._manifestData.lvl.length) {
+            let lvl = 0;
+            while (lvl < this._manifestData.lvl.length) {
+                const files = this._manifestData.lvl[lvl].files || [];
+                let i = files.length;
+                while (i--) {
+                    const idxPath = path.join(this._path, fileName(files[i].i) + ".idx");
+                    if (fs.existsSync(idxPath)) {
+                        applyIndexContent(fs.readFileSync(idxPath, "utf-8"));
+                    }
+                }
+                lvl++;
+            }
+            return;
+        }
+
+        // Fallback for legacy/partial states when manifest has no levels.
+        const filenames = fs.readdirSync(this._path);
+        filenames.sort((a, b) => a > b ? -1 : 1).forEach((filename) => {
+            if (filename.indexOf(".idx") !== -1) {
+                applyIndexContent(fs.readFileSync(path.join(this._path, filename), "utf-8"));
+            }
         });
     }
 }
 
 // this is child fork if process.send exists
 if (process.send !== undefined) {
-    process.on('message', (msg) => { // got message from master
+    process.on('message', (msg: any) => { // got message from master
         switch (msg.type) {
             case "snap-connect":
                 new SnapDatabase(msg.path, msg.keyType, msg.cache, msg.autoFlush, true);

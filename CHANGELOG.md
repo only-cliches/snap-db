@@ -1,3 +1,18 @@
+# [1.5.0] 04-18-2026
+- Added full `Buffer` support for both keys and values.
+- Added dedicated `key: "buffer"` mode and expanded `key: "any"` to support `Buffer` keys.
+- Updated on-disk/index value metadata to preserve typed values (`string` vs `Buffer`) across restart/compaction.
+- Fixed transaction consistency and recovery edge cases:
+  - Nested transaction starts now reject consistently in all modes.
+  - Added explicit transaction abort behavior and durability coverage.
+- Fixed LSM restart/count consistency by aligning startup index rebuild with actual read precedence.
+- Improved compaction correctness for overlapping ranges and tombstone retention.
+- Migrated tests to Vitest with expanded ACID/LSM coverage (single-thread + worker mode).
+- Added dual module packaging support:
+  - ESM `import { SnapDB } from "snap-db"`
+  - CommonJS `const { SnapDB } = require("snap-db")`
+- Refreshed README with updated API docs, Buffer usage, and modernized project positioning.
+
 # [1.1.6] 09-24-2019
 - Readme tweaks.
 - Fixed issue with log loading.
